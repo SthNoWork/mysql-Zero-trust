@@ -17,8 +17,18 @@ public class Main {
     public static void main(String[] args) {
         try {
             // 0. Authenticate Database User
-            String[] dbCreds = view.getDatabaseCredentials();
-            DBConnection.setCredentials(dbCreds[0], dbCreds[1]);
+            while (true) {
+                String[] dbCreds = view.getDatabaseCredentials();
+                DBConnection.setCredentials(dbCreds[0], dbCreds[1]);
+                
+                try (java.sql.Connection conn = DBConnection.getConnection()) {
+                    view.showMessage("✅ Login Successful!");
+                    break;
+                } catch (Exception e) {
+                    view.showMessage("❌ Login Failed: " + e.getMessage());
+                    view.showMessage("Please try again.\n");
+                }
+            }
 
             while (true) {
                 String option = view.showMainMenu();
