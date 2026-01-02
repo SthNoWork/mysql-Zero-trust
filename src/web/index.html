@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Record System</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; text-align: center; }
+        .hidden { display: none; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        button:hover { background-color: #0056b3; }
+        button.secondary { background-color: #6c757d; margin-top: 5px; }
+        button.secondary:hover { background-color: #545b62; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+        .nav button { flex: 1; margin: 0; }
+        #results { margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px; }
+        .record-card { background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin-bottom: 10px; border-radius: 4px; }
+        .status { text-align: center; margin-top: 10px; font-weight: bold; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="login-section">
+    <h1>Database Login</h1>
+    <div class="form-group">
+        <label>MySQL Username</label>
+        <input type="text" id="dbUser" value="root">
+    </div>
+    <div class="form-group">
+        <label>MySQL Password</label>
+        <input type="password" id="dbPass">
+    </div>
+    <button onclick="login()">Login</button>
+    <p class="status" id="login-status"></p>
+</div>
+
+<div class="container hidden" id="main-section">
+    <h1>Hospital System</h1>
+    <div class="nav">
+        <button onclick="showSection('insert')">Insert Record</button>
+        <button onclick="showSection('search')">Search Record</button>
+        <button onclick="showSection('update')">Update Record</button>
+    </div>
+
+    <!-- INSERT SECTION -->
+    <div id="insert-section" class="hidden">
+        <h2>Insert New Record</h2>
+        <div class="form-group"><label>Patient ID</label><input type="text" id="ins-id"></div>
+        <div class="form-group"><label>Name</label><input type="text" id="ins-name"></div>
+        <div class="form-group"><label>DOB (yyyy-mm-dd)</label><input type="text" id="ins-dob"></div>
+        <div class="form-group"><label>Doctor Name</label><input type="text" id="ins-doc"></div>
+        <div class="form-group"><label>Nurse Name</label><input type="text" id="ins-nurse"></div>
+        <div class="form-group"><label>Symptoms</label><textarea id="ins-sym"></textarea></div>
+        <div class="form-group"><label>Diagnosis</label><textarea id="ins-diag"></textarea></div>
+        <div class="form-group"><label>Media Files (Images/Videos)</label><input type="file" id="ins-files" multiple></div>
+        <button onclick="insertRecord()">Submit Record</button>
+    </div>
+
+    <!-- SEARCH SECTION -->
+    <div id="search-section" class="hidden">
+        <h2>Search Record</h2>
+        <div class="form-group">
+            <label>Role (for decryption)</label>
+            <select id="search-role">
+                <option value="doctor">Doctor</option>
+                <option value="nurse">Nurse</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Search By</label>
+            <select id="search-type">
+                <option value="id">Patient ID</option>
+                <option value="name">Patient Name</option>
+                <option value="dob">Date of Birth</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Query</label>
+            <input type="text" id="search-query">
+        </div>
+        <button onclick="searchRecord()">Search</button>
+        <div id="results"></div>
+    </div>
+
+    <!-- UPDATE SECTION -->
+    <div id="update-section" class="hidden">
+        <h2>Update Record</h2>
+        <p>First, search for the record you want to update.</p>
+        <div class="form-group">
+            <label>Search Name to Update</label>
+            <input type="text" id="upd-search-query">
+        </div>
+        <button onclick="searchForUpdate()">Find Record</button>
+        
+        <div id="update-form" class="hidden">
+            <hr>
+            <h3>Edit Details</h3>
+            <input type="hidden" id="upd-index">
+            <input type="hidden" id="upd-id">
+            <div class="form-group"><label>Name</label><input type="text" id="upd-name"></div>
+            <div class="form-group"><label>DOB</label><input type="text" id="upd-dob"></div>
+            <div class="form-group"><label>Doctor</label><input type="text" id="upd-doc"></div>
+            <div class="form-group"><label>Nurse</label><input type="text" id="upd-nurse"></div>
+            <div class="form-group"><label>Symptoms</label><textarea id="upd-sym"></textarea></div>
+            <div class="form-group"><label>Diagnosis</label><textarea id="upd-diag"></textarea></div>
+            <button onclick="submitUpdate()">Save Changes</button>
+        </div>
+    </div>
+
+    <p class="status" id="main-status"></p>
+</div>
+
+<script>
+    // Use relative path so it works on localhost, ngrok, or any domain
+    const API_URL = '/api';
+
+    async function login() {
+        const user = document.getElementById('dbUser').value;
+        const pass = document.getElementById('dbPass').value;
+        
+        try {
+            const res = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user, pass})
+            });
+            if (res.ok) {
+                document.getElementById('login-section').classList.add('hidden');
+                document.getElementById('main-section').classList.remove('hidden');
+                showSection('search');
+            } else {
+                document.getElementById('login-status').innerText = 'Login Failed';
+                document.getElementById('login-status').className = 'status error';
+            }
+        } catch (e) {
+            console.error(e);
+            document.getElementById('login-status').innerText = 'Connection Error';
+        }
+    }
+
+    function showSection(id) {
+        ['insert', 'search', 'update'].forEach(s => document.getElementById(`${s}-section`).classList.add('hidden'));
+        document.getElementById(`${id}-section`).classList.remove('hidden');
+        document.getElementById('main-status').innerText = '';
+        document.getElementById('results').innerHTML = '';
+    }
+
+    async function insertRecord() {
+        const formData = new FormData();
+        formData.append('patientId', document.getElementById('ins-id').value);
+        formData.append('patientName', document.getElementById('ins-name').value);
+        formData.append('patientDob', document.getElementById('ins-dob').value);
+        formData.append('doctorName', document.getElementById('ins-doc').value);
+        formData.append('nurseName', document.getElementById('ins-nurse').value);
+        formData.append('symptoms', document.getElementById('ins-sym').value);
+        formData.append('diagnosis', document.getElementById('ins-diag').value);
+
+        const fileInput = document.getElementById('ins-files');
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append('files', fileInput.files[i]);
+        }
+
+        const res = await fetch(`${API_URL}/insert`, {
+            method: 'POST',
+            body: formData // Fetch automatically sets Content-Type to multipart/form-data
+        });
+
+        const status = document.getElementById('main-status');
+        if (res.ok) {
+            status.innerText = 'Record Inserted Successfully!';
+            status.className = 'status success';
+            // Clear form
+            document.querySelectorAll('#insert-section input, #insert-section textarea').forEach(i => i.value = '');
+        } else {
+            status.innerText = 'Insert Failed: ' + await res.text();
+            status.className = 'status error';
+        }
+    }
+
+    async function searchRecord() {
+        const role = document.getElementById('search-role').value;
+        const type = document.getElementById('search-type').value;
+        const query = document.getElementById('search-query').value;
+
+        const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}&role=${role}`);
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = '';
+
+        if (res.ok) {
+            const records = await res.json();
+            if (records.length === 0) {
+                resultsDiv.innerHTML = '<p class="status">No records found.</p>';
+                return;
+            }
+            records.forEach(r => {
+                let mediaHtml = '';
+                if (r.image) {
+                    mediaHtml += `<br><strong>Image:</strong><br><img src="data:image/jpeg;base64,${r.image}" style="max-width:100%; margin-top:10px;">`;
+                }
+                if (r.video) {
+                    mediaHtml += `<br><strong>Video:</strong><br><video controls src="data:video/mp4;base64,${r.video}" style="max-width:100%; margin-top:10px;"></video>`;
+                }
+
+                const div = document.createElement('div');
+                div.className = 'record-card';
+                div.innerHTML = `
+                    <strong>${r.patientName}</strong> (ID: ${r.patientId || 'Hidden'})<br>
+                    DOB: ${r.patientDob} | Doc: ${r.doctorName} | Nurse: ${r.nurseName}<br>
+                    <hr>
+                    <em>Symptoms:</em> ${r.symptoms}<br>
+                    <em>Diagnosis:</em> ${r.diagnosis}
+                    ${mediaHtml}
+                `;
+                resultsDiv.appendChild(div);
+            });
+        } else {
+            document.getElementById('main-status').innerText = 'Search Failed';
+        }
+    }
+
+    async function searchForUpdate() {
+        const query = document.getElementById('upd-search-query').value;
+        // Defaulting to name search for update flow simplicity
+        const res = await fetch(`${API_URL}/search?type=name&query=${encodeURIComponent(query)}&role=doctor`); // Assume doctor for update view
+        
+        if (res.ok) {
+            const records = await res.json();
+            if (records.length > 0) {
+                const r = records[0]; // Just pick first for simplicity in this demo
+                document.getElementById('update-form').classList.remove('hidden');
+                
+                document.getElementById('upd-index').value = r.recordIndex;
+                document.getElementById('upd-id').value = r.patientId || ''; // Might be null if hash
+                document.getElementById('upd-name').value = r.patientName;
+                document.getElementById('upd-dob').value = r.patientDob;
+                document.getElementById('upd-doc').value = r.doctorName;
+                document.getElementById('upd-nurse').value = r.nurseName;
+                document.getElementById('upd-sym').value = r.symptoms;
+                document.getElementById('upd-diag').value = r.diagnosis;
+            } else {
+                alert('No record found');
+            }
+        }
+    }
+
+    async function submitUpdate() {
+        const data = {
+            recordIndex: document.getElementById('upd-index').value,
+            patientId: document.getElementById('upd-id').value,
+            patientName: document.getElementById('upd-name').value,
+            patientDob: document.getElementById('upd-dob').value,
+            doctorName: document.getElementById('upd-doc').value,
+            nurseName: document.getElementById('upd-nurse').value,
+            symptoms: document.getElementById('upd-sym').value,
+            diagnosis: document.getElementById('upd-diag').value
+        };
+
+        const res = await fetch(`${API_URL}/update`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+
+        if (res.ok) {
+            alert('Update Successful');
+            document.getElementById('update-form').classList.add('hidden');
+        } else {
+            alert('Update Failed');
+        }
+    }
+</script>
+
+</body>
+</html>
