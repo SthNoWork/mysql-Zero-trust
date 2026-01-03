@@ -53,7 +53,6 @@ public class Main {
     }
 
     private static void handleInsert() throws Exception {
-        view.showMessage("\n--- Enter Hospital Record Details ---");
         PatientRecord record = view.getPatientInput();
         String[] medicalData = view.getMedicalDataInput();
 
