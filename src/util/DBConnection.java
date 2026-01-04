@@ -10,7 +10,7 @@ public class DBConnection {
             "jdbc:mysql://192.168.0.117:3306/hospital?useSSL=true&serverTimezone=UTC";
 
     private static String username = "webapp_user";
-    private static String password = "STRONG_RANDOM_PASSOWRD";
+    private static String password = "STRONG_RANDOM_PASSWORD";
     private static Connection instance;
 
     public static void setCredentials(String user, String pass) {
