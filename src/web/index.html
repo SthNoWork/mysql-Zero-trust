@@ -204,20 +204,6 @@
                 return;
             }
             records.forEach(r => {
-                let mediaHtml = '';
-                if (r.images && r.images.length > 0) {
-                    mediaHtml += '<br><strong>Images:</strong><br>';
-                    r.images.forEach(img => {
-                        mediaHtml += `<img src="data:image/jpeg;base64,${img}" style="max-width:100%; margin-top:10px; margin-right: 10px;">`;
-                    });
-                }
-                if (r.videos && r.videos.length > 0) {
-                    mediaHtml += '<br><strong>Videos:</strong><br>';
-                    r.videos.forEach(vid => {
-                        mediaHtml += `<video controls src="data:video/mp4;base64,${vid}" style="max-width:100%; margin-top:10px; margin-right: 10px;"></video>`;
-                    });
-                }
-
                 const div = document.createElement('div');
                 div.className = 'record-card';
                 div.innerHTML = `
@@ -226,12 +212,56 @@
                     <hr>
                     <em>Symptoms:</em> ${r.symptoms}<br>
                     <em>Diagnosis:</em> ${r.diagnosis}
-                    ${mediaHtml}
+                    <br><button onclick="loadMedia(this, ${r.recordIndex})" style="width:auto; margin-top:10px; background-color:#6c757d;">Load Media</button>
+                    <div class="media-container"></div>
                 `;
                 resultsDiv.appendChild(div);
             });
         } else {
             document.getElementById('main-status').innerText = 'Search Failed';
+        }
+    }
+
+    async function loadMedia(btn, id) {
+        btn.innerText = "Loading...";
+        btn.disabled = true;
+        const token = localStorage.getItem('token');
+        
+        try {
+            const res = await fetch(`${API_URL}/media?id=${id}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            
+            if (res.ok) {
+                const media = await res.json();
+                let mediaHtml = '';
+                
+                if (media.images && media.images.length > 0) {
+                    mediaHtml += '<br><strong>Images:</strong><br>';
+                    media.images.forEach(img => {
+                        mediaHtml += `<img src="data:image/jpeg;base64,${img}" style="max-width:100%; margin-top:10px; margin-right: 10px;">`;
+                    });
+                }
+                if (media.videos && media.videos.length > 0) {
+                    mediaHtml += '<br><strong>Videos:</strong><br>';
+                    media.videos.forEach(vid => {
+                        mediaHtml += `<video controls src="data:video/mp4;base64,${vid}" style="max-width:100%; margin-top:10px; margin-right: 10px;"></video>`;
+                    });
+                }
+                
+                if (mediaHtml === '') {
+                    mediaHtml = '<br><em>No media found.</em>';
+                }
+                
+                const container = btn.nextElementSibling;
+                container.innerHTML = mediaHtml;
+                btn.style.display = 'none';
+            } else {
+                btn.innerText = "Failed to load";
+            }
+        } catch (e) {
+            console.error(e);
+            btn.innerText = "Error";
         }
     }
 

@@ -80,6 +80,7 @@ public class SimpleWebServer {
         server.createContext("/api/insert", new InsertHandler());
         server.createContext("/api/search", new SearchHandler());
         server.createContext("/api/update", new UpdateHandler());
+        server.createContext("/api/media", new MediaHandler());
 
         server.setExecutor(null); // creates a default executor
         System.out.println("Server started on https://localhost:" + PORT);
@@ -336,7 +337,7 @@ public class SimpleWebServer {
                     for (PatientRecord r : results) {
                         try {
                             String[] decrypted = patientService.decryptMedicalData(r, isDoctor);
-                            Map<String, List<String>> media = patientService.getDecryptedMedia(r, isDoctor);
+                            // Skip media decryption for search results
                             
                             Map<String, Object> map = new HashMap<>();
                             map.put("patientName", r.getPatientName());
@@ -348,8 +349,8 @@ public class SimpleWebServer {
                             map.put("diagnosis", decrypted[1]);
                             map.put("recordIndex", r.getRecordIndex());
                             
-                            map.put("images", media.get("images"));
-                            map.put("videos", media.get("videos"));
+                            // map.put("images", media.get("images"));
+                            // map.put("videos", media.get("videos"));
                             
                             jsonResults.add(map);
                         } catch (Exception e) {
@@ -365,6 +366,44 @@ public class SimpleWebServer {
                     e.printStackTrace();
                     sendResponse(t, 500, e.getMessage());
                 }
+            }
+        }
+    }
+
+    static class MediaHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if ("GET".equals(t.getRequestMethod())) {
+                try {
+                    Map<String, String> queryParams = parseQueryParams(t.getRequestURI().getQuery());
+                    String idStr = queryParams.get("id");
+                    if (idStr == null) {
+                        sendResponse(t, 400, "Missing id");
+                        return;
+                    }
+                    int id = Integer.parseInt(idStr);
+
+                    // Auto-detect role from session
+                    String role = getRoleFromRequest(t);
+                    boolean isDoctor = "doctor".equalsIgnoreCase(role);
+
+                    PatientRecord r = repository.getById(id);
+                    if (r == null) {
+                        sendResponse(t, 404, "Record not found");
+                        return;
+                    }
+
+                    Map<String, List<String>> media = patientService.getDecryptedMedia(r, isDoctor);
+                    String json = toJson(media);
+                    t.getResponseHeaders().set("Content-Type", "application/json");
+                    sendResponse(t, 200, json);
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(t, 500, e.getMessage());
+                }
+            } else {
+                sendResponse(t, 405, "Method Not Allowed");
             }
         }
     }
@@ -482,6 +521,26 @@ public class SimpleWebServer {
             }
         }
         return map;
+    }
+
+    private static String toJson(Map<String, List<String>> map) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        int i = 0;
+        for (Map.Entry<String, List<String>> entry : map.entrySet()) {
+            sb.append("\"").append(entry.getKey()).append("\":");
+            sb.append("[");
+            List<String> list = entry.getValue();
+            for (int j = 0; j < list.size(); j++) {
+                sb.append("\"").append(list.get(j)).append("\"");
+                if (j < list.size() - 1) sb.append(",");
+            }
+            sb.append("]");
+            if (i < map.size() - 1) sb.append(",");
+            i++;
+        }
+        sb.append("}");
+        return sb.toString();
     }
 
     private static String toJson(List<Map<String, Object>> list) {

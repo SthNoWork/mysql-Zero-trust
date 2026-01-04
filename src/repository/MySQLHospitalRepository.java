@@ -20,8 +20,8 @@ public class MySQLHospitalRepository implements HospitalRepository {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        Connection conn = DBConnection.getConnection();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, Hashing.sha256(record.getPatientId()));
             stmt.setString(2, record.getPatientName());
@@ -58,8 +58,8 @@ public class MySQLHospitalRepository implements HospitalRepository {
             WHERE record_index = ?
         """;
 
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        Connection conn = DBConnection.getConnection();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, record.getPatientName());
             stmt.setDate(2, record.getPatientDob());
@@ -83,18 +83,21 @@ public class MySQLHospitalRepository implements HospitalRepository {
         String sql = "";
         if (type.equals("id")) {
             // ID is hashed, so we must search for the exact hash
-            sql = "SELECT * FROM Hospital_Records WHERE patient_id_hash = ?";
+            sql = "SELECT record_index, patient_id_hash, patient_name, patient_dob, check_in_date, doctor_name, nurse_name, encrypted_symptoms, encrypted_diagnosis, doctor_encrypted_aes_key, nurse_encrypted_aes_key FROM Hospital_Records WHERE patient_id_hash = ?";
         } else if (type.equals("name")) {
             // Use LIKE for partial matches, sort exact matches to the top
-            sql = "SELECT * FROM Hospital_Records WHERE patient_name LIKE ? ORDER BY CASE WHEN patient_name = ? THEN 0 ELSE 1 END, patient_name";
+            sql = "SELECT record_index, patient_id_hash, patient_name, patient_dob, check_in_date, doctor_name, nurse_name, encrypted_symptoms, encrypted_diagnosis, doctor_encrypted_aes_key, nurse_encrypted_aes_key FROM Hospital_Records WHERE patient_name LIKE ? ORDER BY CASE WHEN patient_name = ? THEN 0 ELSE 1 END, patient_name";
         } else if (type.equals("dob")) {
             // Cast DATE to CHAR to allow partial search (e.g. "2000" finds all dates in 2000)
-            sql = "SELECT * FROM Hospital_Records WHERE CAST(patient_dob AS CHAR) LIKE ?";
+            sql = "SELECT record_index, patient_id_hash, patient_name, patient_dob, check_in_date, doctor_name, nurse_name, encrypted_symptoms, encrypted_diagnosis, doctor_encrypted_aes_key, nurse_encrypted_aes_key FROM Hospital_Records WHERE CAST(patient_dob AS CHAR) LIKE ?";
+        } else {
+            // Default: Search all if query is empty or type is unknown (fallback)
+             sql = "SELECT record_index, patient_id_hash, patient_name, patient_dob, check_in_date, doctor_name, nurse_name, encrypted_symptoms, encrypted_diagnosis, doctor_encrypted_aes_key, nurse_encrypted_aes_key FROM Hospital_Records LIMIT 50";
         }
 
         List<PatientRecord> results = new ArrayList<>();
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        Connection conn = DBConnection.getConnection();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             if (type.equals("id")) {
                 stmt.setString(1, Hashing.sha256(query));
@@ -104,6 +107,7 @@ public class MySQLHospitalRepository implements HospitalRepository {
             } else if (type.equals("dob")) {
                 stmt.setString(1, "%" + query + "%");
             }
+            // No params for default case
 
             ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
@@ -116,8 +120,8 @@ public class MySQLHospitalRepository implements HospitalRepository {
     @Override
     public PatientRecord getById(int recordIndex) throws SQLException {
         String sql = "SELECT * FROM Hospital_Records WHERE record_index = ?";
-        try (Connection conn = DBConnection.getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+        Connection conn = DBConnection.getConnection();
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             
             stmt.setInt(1, recordIndex);
             ResultSet rs = stmt.executeQuery();
@@ -139,8 +143,17 @@ public class MySQLHospitalRepository implements HospitalRepository {
         
         record.setEncryptedSymptoms(rs.getBytes("encrypted_symptoms"));
         record.setEncryptedDiagnosis(rs.getBytes("encrypted_diagnosis"));
-        record.setEncryptedImages(rs.getBytes("encrypted_images"));
-        record.setEncryptedVideos(rs.getBytes("encrypted_videos"));
+        
+        // Check if columns exist before accessing (for search vs getById)
+        try {
+            record.setEncryptedImages(rs.getBytes("encrypted_images"));
+            record.setEncryptedVideos(rs.getBytes("encrypted_videos"));
+        } catch (SQLException e) {
+            // Columns not present in this query (search optimization)
+            record.setEncryptedImages(null);
+            record.setEncryptedVideos(null);
+        }
+
         record.setDoctorEncryptedAesKey(rs.getBytes("doctor_encrypted_aes_key"));
         record.setNurseEncryptedAesKey(rs.getBytes("nurse_encrypted_aes_key"));
         
