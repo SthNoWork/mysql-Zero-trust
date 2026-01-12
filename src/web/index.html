@@ -45,6 +45,7 @@
         <button onclick="showSection('insert')">Insert Record</button>
         <button onclick="showSection('search')">Search Record</button>
         <button onclick="showSection('update')">Update Record</button>
+        <button onclick="logout()" style="background-color: #dc3545;">Logout</button>
     </div>
 
     <!-- INSERT SECTION -->
@@ -119,10 +120,38 @@
 <script>
     // Use relative path so it works on localhost, ngrok, or any domain
     const API_URL = '/api';
+    
+    // Logout on browser/tab close to free the certificate slot
+    window.addEventListener('beforeunload', function(e) {
+        const token = localStorage.getItem('token');
+        if (token) {
+            // Use sendBeacon for reliable logout on close
+            navigator.sendBeacon(`${API_URL}/logout`, new Blob([JSON.stringify({token})], {type: 'application/json'}));
+        }
+    });
+    
+    async function logout() {
+        const token = localStorage.getItem('token');
+        if (token) {
+            try {
+                await fetch(`${API_URL}/logout`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+            } catch (e) {
+                console.error('Logout error:', e);
+            }
+        }
+        localStorage.removeItem('token');
+        document.getElementById('main-section').classList.add('hidden');
+        document.getElementById('login-section').classList.remove('hidden');
+        document.getElementById('login-status').innerText = '';
+    }
 
     async function login() {
         const user = document.getElementById('dbUser').value;
         const pass = document.getElementById('dbPass').value;
+        const statusEl = document.getElementById('login-status');
         
         try {
             const res = await fetch(`${API_URL}/login`, {
@@ -137,13 +166,25 @@
                 document.getElementById('login-section').classList.add('hidden');
                 document.getElementById('main-section').classList.remove('hidden');
                 showSection('search');
+            } else if (res.status === 409) {
+                // Certificate already has an active session
+                statusEl.innerHTML = '⚠️ <strong>This certificate is already in use on another device/browser.</strong><br>Only 1 connection per certificate is allowed.<br><small>Ask the other user to logout, or wait for their session to expire.</small>';
+                statusEl.className = 'status error';
+            } else if (res.status === 401) {
+                statusEl.innerText = '❌ Invalid username or password';
+                statusEl.className = 'status error';
+            } else if (res.status === 403) {
+                statusEl.innerText = '❌ Client certificate not found. Please install your .p12 certificate.';
+                statusEl.className = 'status error';
             } else {
-                document.getElementById('login-status').innerText = 'Login Failed';
-                document.getElementById('login-status').className = 'status error';
+                const text = await res.text();
+                statusEl.innerText = '❌ Login Failed: ' + text;
+                statusEl.className = 'status error';
             }
         } catch (e) {
             console.error(e);
-            document.getElementById('login-status').innerText = 'Connection Error';
+            statusEl.innerText = '❌ Connection Error - Is the server running?';
+            statusEl.className = 'status error';
         }
     }
 

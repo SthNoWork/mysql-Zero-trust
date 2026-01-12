@@ -19,6 +19,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.*;
+import java.security.cert.X509Certificate;
+import java.util.Set;
+import java.util.Collections;
 import java.security.cert.CertificateException;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -35,8 +38,14 @@ public class SimpleWebServer {
     private static final HospitalRepository repository = new MySQLHospitalRepository();
     private static final PatientService patientService = new PatientService();
     
-    // Token -> Role
+    // Token -> "username:role"
     private static final Map<String, String> sessions = new ConcurrentHashMap<>();
+    
+    // Track active client certificate fingerprints (1 connection per cert)
+    private static final Set<String> activeClients = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    
+    // Token -> client cert fingerprint (to remove from activeClients on logout)
+    private static final Map<String, String> tokenToCertFingerprint = new ConcurrentHashMap<>();
 
     public void start() throws IOException, NoSuchAlgorithmException, KeyStoreException, CertificateException, UnrecoverableKeyException, KeyManagementException {
         // Load Keystore
@@ -77,6 +86,7 @@ public class SimpleWebServer {
 
         // API Endpoints
         server.createContext("/api/login", new LoginHandler());
+        server.createContext("/api/logout", new LogoutHandler());
         server.createContext("/api/insert", new InsertHandler());
         server.createContext("/api/search", new SearchHandler());
         server.createContext("/api/update", new UpdateHandler());
@@ -115,6 +125,19 @@ public class SimpleWebServer {
         @Override
         public void handle(HttpExchange t) throws IOException {
             if ("POST".equals(t.getRequestMethod())) {
+                // Extract client certificate fingerprint
+                String certFingerprint = getClientCertFingerprint(t);
+                if (certFingerprint == null) {
+                    sendResponse(t, 403, "Client certificate required");
+                    return;
+                }
+                
+                // Check if this certificate already has an active session
+                if (activeClients.contains(certFingerprint)) {
+                    sendResponse(t, 409, "This certificate already has an active session. Only 1 connection per client is allowed.");
+                    return;
+                }
+                
                 Map<String, String> params = parseJsonBody(t.getRequestBody());
                 String user = params.get("user");
                 String pass = params.get("pass");
@@ -127,6 +150,12 @@ public class SimpleWebServer {
                         String token = UUID.randomUUID().toString();
                         // Store "username:role" in the session
                         sessions.put(token, user + ":" + role);
+                        
+                        // Mark this certificate as active
+                        activeClients.add(certFingerprint);
+                        tokenToCertFingerprint.put(token, certFingerprint);
+                        
+                        System.out.println("[LOGIN] User: " + user + ", Cert: " + certFingerprint.substring(0, 16) + "...");
                         
                         String json = "{\"token\":\"" + token + "\", \"role\":\"" + role + "\"}";
                         t.getResponseHeaders().set("Content-Type", "application/json");
@@ -167,6 +196,59 @@ public class SimpleWebServer {
             }
             return null;
         }
+    }
+    
+    static class LogoutHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            if ("POST".equals(t.getRequestMethod())) {
+                String authHeader = t.getRequestHeaders().getFirst("Authorization");
+                if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                    String token = authHeader.substring(7);
+                    
+                    // Remove from sessions
+                    String sessionData = sessions.remove(token);
+                    
+                    // Remove certificate from active clients
+                    String certFingerprint = tokenToCertFingerprint.remove(token);
+                    if (certFingerprint != null) {
+                        activeClients.remove(certFingerprint);
+                        System.out.println("[LOGOUT] Cert: " + certFingerprint.substring(0, 16) + "...");
+                    }
+                    
+                    sendResponse(t, 200, "Logged out");
+                } else {
+                    sendResponse(t, 400, "No token provided");
+                }
+            } else {
+                sendResponse(t, 405, "Method Not Allowed");
+            }
+        }
+    }
+    
+    // Extract client certificate fingerprint from SSL session
+    private static String getClientCertFingerprint(HttpExchange t) {
+        try {
+            if (t instanceof com.sun.net.httpserver.HttpsExchange) {
+                com.sun.net.httpserver.HttpsExchange httpsExchange = (com.sun.net.httpserver.HttpsExchange) t;
+                SSLSession sslSession = httpsExchange.getSSLSession();
+                java.security.cert.Certificate[] certs = sslSession.getPeerCertificates();
+                if (certs != null && certs.length > 0 && certs[0] instanceof X509Certificate) {
+                    X509Certificate clientCert = (X509Certificate) certs[0];
+                    // Use SHA-256 fingerprint of the certificate
+                    MessageDigest md = MessageDigest.getInstance("SHA-256");
+                    byte[] digest = md.digest(clientCert.getEncoded());
+                    StringBuilder sb = new StringBuilder();
+                    for (byte b : digest) {
+                        sb.append(String.format("%02x", b));
+                    }
+                    return sb.toString();
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to get client certificate: " + e.getMessage());
+        }
+        return null;
     }
 
     private static List<Path> parseMultipart(InputStream is, String boundary, Map<String, String> params) throws IOException {

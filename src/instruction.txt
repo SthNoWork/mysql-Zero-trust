@@ -1,0 +1,24 @@
+============================================================
+📦 CLIENT CERTIFICATE READY FOR DISTRIBUTION
+============================================================
+File: D:\Online\Github\mysql-Zero-trust\clients\doctor.p12
+Password: yourpassword
+
+📋 INSTALLATION INSTRUCTIONS FOR TARGET DEVICE:
+------------------------------------------------------------
+
+▶ WINDOWS (Chrome/Edge) - RECOMMENDED METHOD:
+  1. Copy .p12 file to target device
+  2. Open PowerShell as Administrator and run:
+     $pwd = ConvertTo-SecureString -String 'yourpassword' -AsPlainText -Force
+     Import-PfxCertificate -FilePath 'Downloads\mike.p12' -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+  3. Delete the .p12 file from the device
+  ⚠️ Do NOT use double-click import (allows export)!
+
+▶ iOS/iPadOS:
+  ...
+  Note: iOS does not allow key export by default ✓
+
+============================================================
+🔒 SECURITY: After installing on target device, DELETE the .p12 file!
+============================================================
