@@ -22,3 +22,7 @@ Password: yourpassword
 ============================================================
 🔒 SECURITY: After installing on target device, DELETE the .p12 file!
 ============================================================
+
+$pwd = ConvertTo-SecureString -String 'helloworld' -AsPlainText -Force; Import-PfxCertificate -FilePath "$env:USERPROFILE\Downloads\mike.p12" -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
+Get-ChildItem Cert:\CurrentUser\My | Remove-Item
+Get-ChildItem Cert:\CurrentUser\My

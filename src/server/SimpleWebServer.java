@@ -31,6 +31,8 @@ import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 
 public class SimpleWebServer {
 
@@ -68,6 +70,13 @@ public class SimpleWebServer {
 
         // Create HTTPS Server
         HttpsServer server = HttpsServer.create(new InetSocketAddress(PORT), 0);
+        // Disable SSL session caching so certificate is requested fresh each connection
+        SSLSessionContext serverSessionContext = sslContext.getServerSessionContext();
+        if (serverSessionContext != null) {
+            serverSessionContext.setSessionCacheSize(0);
+            serverSessionContext.setSessionTimeout(1); // 1 second (effectively no reuse)
+        }
+        
         server.setHttpsConfigurator(new HttpsConfigurator(sslContext) {
             public void configure(HttpsParameters params) {
                 try {
@@ -92,9 +101,13 @@ public class SimpleWebServer {
         server.createContext("/api/update", new UpdateHandler());
         server.createContext("/api/media", new MediaHandler());
 
-        server.setExecutor(null); // creates a default executor
-        System.out.println("Server started on https://localhost:" + PORT);
+        // Use a fixed thread pool to limit thread creation overhead and improve throughput
+        int threads = Math.max(2, Runtime.getRuntime().availableProcessors() * 2);
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        server.setExecutor(executor);
+        System.out.println("Server started on https://localhost:" + PORT + " (threads=" + threads + ")");
         server.start();
+        // Note: executor is not shutdown here so the server keeps running until process exit
     }
 
     static class StaticHandler implements HttpHandler {
@@ -110,11 +123,22 @@ public class SimpleWebServer {
             }
 
             try {
-                byte[] content = Files.readAllBytes(Paths.get("src/web" + path));
-                t.sendResponseHeaders(200, content.length);
-                OutputStream os = t.getResponseBody();
-                os.write(content);
-                os.close();
+                Path file = Paths.get("src/web" + path);
+                if (!Files.exists(file) || Files.isDirectory(file)) {
+                    sendResponse(t, 404, "File Not Found");
+                    return;
+                }
+                long size = Files.size(file);
+                t.getResponseHeaders().set("Content-Type", Files.probeContentType(file));
+                t.sendResponseHeaders(200, size);
+                try (InputStream is = Files.newInputStream(file);
+                     OutputStream os = t.getResponseBody()) {
+                    byte[] buffer = new byte[8192];
+                    int read;
+                    while ((read = is.read(buffer)) != -1) {
+                        os.write(buffer, 0, read);
+                    }
+                }
             } catch (IOException e) {
                 sendResponse(t, 404, "File Not Found");
             }
@@ -127,6 +151,7 @@ public class SimpleWebServer {
             if ("POST".equals(t.getRequestMethod())) {
                 // Extract client certificate fingerprint
                 String certFingerprint = getClientCertFingerprint(t);
+                String certCN = getClientCertCN(t);
                 if (certFingerprint == null) {
                     sendResponse(t, 403, "Client certificate required");
                     return;
@@ -139,29 +164,44 @@ public class SimpleWebServer {
                 }
                 
                 Map<String, String> params = parseJsonBody(t.getRequestBody());
+                // Use provided username; if not provided, fall back to certificate CN
                 String user = params.get("user");
+                if ((user == null || user.trim().isEmpty()) && certCN != null && !certCN.trim().isEmpty()) {
+                    user = certCN;
+                }
                 String pass = params.get("pass");
 
+                if (user == null || user.trim().isEmpty()) {
+                    sendResponse(t, 400, "Username is required");
+                    return;
+                }
+
                 try {
-                    // Check against CSV
-                    String role = checkCredentials(user, pass);
+                    // Check against CSV (ensure user<->cert binding both ways)
+                    String result = checkCredentials(user, pass, certFingerprint);
                     
-                    if (role != null) {
+                    if (result != null && !result.startsWith("ERROR:")) {
+                        // result is the role
+                        String role = result;
                         String token = UUID.randomUUID().toString();
-                        // Store "username:role" in the session
+                        // Store "username:role" in the session and tie to this certificate
                         sessions.put(token, user + ":" + role);
-                        
-                        // Mark this certificate as active
+
+                        // Mark this certificate as active and associate with token
                         activeClients.add(certFingerprint);
                         tokenToCertFingerprint.put(token, certFingerprint);
                         
-                        System.out.println("[LOGIN] User: " + user + ", Cert: " + certFingerprint.substring(0, 16) + "...");
+                        // Minimal logging for performance; full fingerprint omitted
+                        System.out.println("[LOGIN] User: " + user);
                         
                         String json = "{\"token\":\"" + token + "\", \"role\":\"" + role + "\"}";
                         t.getResponseHeaders().set("Content-Type", "application/json");
                         sendResponse(t, 200, json);
                     } else {
-                        sendResponse(t, 401, "Invalid Credentials");
+                        // Return the specific error message
+                        String errorMsg = (result != null && result.startsWith("ERROR:")) 
+                            ? result.substring(6) : "Invalid Credentials";
+                        sendResponse(t, 401, errorMsg);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -172,29 +212,73 @@ public class SimpleWebServer {
             }
         }
 
-        private String checkCredentials(String user, String pass) {
+        /**
+         * Check credentials with strict cert<->user binding.
+         * Returns: role on success, or error string starting with "ERROR:" on failure.
+         */
+        private String checkCredentials(String user, String pass, String certFingerprint) {
             File file = new File("src/users.csv");
-            if (!file.exists()) return null;
+            if (!file.exists()) return "ERROR:User database not found";
 
             String inputHash = Hashing.sha256(pass);
+            boolean userFound = false;
+            boolean certBoundToAnotherUser = false;
+            String certBoundUsername = null;
+            
             try (BufferedReader br = new BufferedReader(new FileReader(file))) {
                 String line;
                 while ((line = br.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
                     String[] parts = line.split(",");
                     if (parts.length >= 3) {
                         String csvUser = parts[0];
                         String csvRole = parts[1];
                         String csvHash = parts[2];
-                        
-                        if (csvUser.equals(user) && csvHash.equals(inputHash)) {
+                        String csvFingerprint = parts.length >= 4 ? parts[3].trim() : null;
+
+                        // Check if this cert is bound to another user
+                        if (csvFingerprint != null && !csvFingerprint.isEmpty() && certFingerprint != null) {
+                            if (csvFingerprint.equalsIgnoreCase(certFingerprint.trim()) && !csvUser.equals(user)) {
+                                certBoundToAnotherUser = true;
+                                certBoundUsername = csvUser;
+                            }
+                        }
+
+                        if (csvUser.equals(user)) {
+                            userFound = true;
+                            // Check password first
+                            if (!csvHash.equals(inputHash)) {
+                                return "ERROR:Wrong password";
+                            }
+                            // Password correct, now check cert binding
+                            if (csvFingerprint != null && !csvFingerprint.isEmpty()) {
+                                if (certFingerprint == null) {
+                                    return "ERROR:Certificate required for this user";
+                                }
+                                if (!csvFingerprint.equalsIgnoreCase(certFingerprint.trim())) {
+                                    return "ERROR:Certificate not bound to this user";
+                                }
+                            }
+                            // All checks passed
                             return csvRole;
                         }
                     }
                 }
             } catch (IOException e) {
                 e.printStackTrace();
+                return "ERROR:Server error reading credentials";
             }
-            return null;
+            
+            // Cert is bound to a different user
+            if (certBoundToAnotherUser) {
+                return "ERROR:This certificate is bound to user '" + certBoundUsername + "', not '" + user + "'";
+            }
+            
+            if (!userFound) {
+                return "ERROR:User not found";
+            }
+            
+            return "ERROR:Unknown error";
         }
     }
     
@@ -207,6 +291,7 @@ public class SimpleWebServer {
                     String token = authHeader.substring(7);
                     
                     // Remove from sessions
+                    @SuppressWarnings("unused")
                     String sessionData = sessions.remove(token);
                     
                     // Remove certificate from active clients
@@ -226,6 +311,70 @@ public class SimpleWebServer {
         }
     }
     
+    // Authenticate a request: returns sessionData ("user:role") if token present and certificate matches, otherwise null
+    private static String authenticateRequest(HttpExchange t) {
+        try {
+            String authHeader = t.getRequestHeaders().getFirst("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) return null;
+            String token = authHeader.substring(7);
+            String sessionData = sessions.get(token);
+            if (sessionData == null) return null;
+            String mapped = tokenToCertFingerprint.get(token);
+            String cur = getClientCertFingerprint(t);
+            if (mapped == null || cur == null) return null;
+            if (!mapped.equals(cur)) return null;
+            // Additionally ensure the user's stored fingerprint (if any) matches the presented cert
+            try {
+                String[] parts = sessionData.split(":");
+                if (parts.length >= 1) {
+                    String username = parts[0];
+                    File file = new File("src/users.csv");
+                    if (file.exists()) {
+                        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+                            String line;
+                            while ((line = br.readLine()) != null) {
+                                String[] p = line.split(",");
+                                if (p.length >= 1 && p[0].equals(username)) {
+                                    String stored = p.length >= 4 ? p[3] : null;
+                                    if (stored != null && !stored.trim().isEmpty()) {
+                                        if (!stored.trim().equalsIgnoreCase(cur.trim())) return null;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+            return sessionData;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Extract certificate CN (Common Name) from client cert subject, or null
+    private static String getClientCertCN(HttpExchange t) {
+        try {
+            if (t instanceof com.sun.net.httpserver.HttpsExchange) {
+                com.sun.net.httpserver.HttpsExchange httpsExchange = (com.sun.net.httpserver.HttpsExchange) t;
+                SSLSession sslSession = httpsExchange.getSSLSession();
+                java.security.cert.Certificate[] certs = sslSession.getPeerCertificates();
+                if (certs != null && certs.length > 0 && certs[0] instanceof X509Certificate) {
+                    X509Certificate clientCert = (X509Certificate) certs[0];
+                    String subj = clientCert.getSubjectX500Principal().getName();
+                    // parse CN=
+                    for (String part : subj.split(",")) {
+                        part = part.trim();
+                        if (part.startsWith("CN=")) return part.substring(3);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
+
     // Extract client certificate fingerprint from SSL session
     private static String getClientCertFingerprint(HttpExchange t) {
         try {
@@ -319,16 +468,10 @@ public class SimpleWebServer {
         public void handle(HttpExchange t) throws IOException {
             if ("POST".equals(t.getRequestMethod())) {
                 try {
-                    // Auth Check
-                    String authHeader = t.getRequestHeaders().getFirst("Authorization");
-                    String sessionData = null;
-                    if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                        String token = authHeader.substring(7);
-                        sessionData = sessions.get(token);
-                    }
-
+                    // Auth and certificate check
+                    String sessionData = authenticateRequest(t);
                     if (sessionData == null) {
-                        sendResponse(t, 401, "Unauthorized");
+                        sendResponse(t, 401, "Unauthorized or certificate mismatch");
                         return;
                     }
 
@@ -402,18 +545,27 @@ public class SimpleWebServer {
         public void handle(HttpExchange t) throws IOException {
             if ("GET".equals(t.getRequestMethod())) {
                 try {
+                    // validate token and cert association (allow anonymous searches? require auth)
+                    String sessionData = authenticateRequest(t);
+                    if (sessionData == null) {
+                        sendResponse(t, 401, "Unauthorized or certificate mismatch");
+                        return;
+                    }
+
+                    String[] sessionParts = sessionData.split(":");
+                    String currentRole = sessionParts[1];
+                    boolean isDoctor = "doctor".equalsIgnoreCase(currentRole);
+
                     Map<String, String> queryParams = parseQueryParams(t.getRequestURI().getQuery());
                     String type = queryParams.get("type");
                     String query = queryParams.get("query");
-                    
-                    // Auto-detect role from session
-                    String role = getRoleFromRequest(t);
-                    boolean isDoctor = "doctor".equalsIgnoreCase(role);
-                    
-                    System.out.println("Search Request - Role detected: " + role);
+                    System.out.println("Search Request - Role detected: " + currentRole);
 
+                    // Perform repository search
+                    if (query == null) query = "";
+                    if (type == null) type = "";
                     List<PatientRecord> results = repository.search(query, type);
-                    
+
                     // Decrypt results for display
                     List<Map<String, Object>> jsonResults = new ArrayList<>();
                     for (PatientRecord r : results) {
@@ -457,6 +609,16 @@ public class SimpleWebServer {
         public void handle(HttpExchange t) throws IOException {
             if ("GET".equals(t.getRequestMethod())) {
                 try {
+                    // auth + cert check
+                    String sessionData = authenticateRequest(t);
+                    if (sessionData == null) {
+                        sendResponse(t, 401, "Unauthorized or certificate mismatch");
+                        return;
+                    }
+                    String[] sessionParts = sessionData.split(":");
+                    String currentRole = sessionParts[1];
+                    boolean isDoctor = "doctor".equalsIgnoreCase(currentRole);
+
                     Map<String, String> queryParams = parseQueryParams(t.getRequestURI().getQuery());
                     String idStr = queryParams.get("id");
                     if (idStr == null) {
@@ -465,9 +627,7 @@ public class SimpleWebServer {
                     }
                     int id = Integer.parseInt(idStr);
 
-                    // Auto-detect role from session
-                    String role = getRoleFromRequest(t);
-                    boolean isDoctor = "doctor".equalsIgnoreCase(role);
+                    // role/isDoctor already determined from sessionData above
 
                     PatientRecord r = repository.getById(id);
                     if (r == null) {
@@ -495,18 +655,15 @@ public class SimpleWebServer {
         public void handle(HttpExchange t) throws IOException {
             if ("POST".equals(t.getRequestMethod())) {
                 try {
-                    // Auth Check
-                    String authHeader = t.getRequestHeaders().getFirst("Authorization");
-                    String sessionData = null;
-                    if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                        String token = authHeader.substring(7);
-                        sessionData = sessions.get(token);
-                    }
-
+                    // Auth and certificate check
+                    String sessionData = authenticateRequest(t);
                     if (sessionData == null) {
-                        sendResponse(t, 401, "Unauthorized");
+                        sendResponse(t, 401, "Unauthorized or certificate mismatch");
                         return;
                     }
+                    String[] _parts = sessionData.split(":");
+                    String currentRole = _parts[1];
+                    boolean isDoctor = "doctor".equalsIgnoreCase(currentRole);
 
                     String contentType = t.getRequestHeaders().getFirst("Content-Type");
                     Map<String, String> params = new HashMap<>();
@@ -535,8 +692,6 @@ public class SimpleWebServer {
 
                     // Media Handling: If no new files, try to restore existing ones
                     if (uploadedFiles.isEmpty()) {
-                        String role = getRoleFromRequest(t);
-                        boolean isDoctor = "doctor".equalsIgnoreCase(role);
                         try {
                             // Decrypt and restore to disk
                             patientService.decryptAndRestore(existing, isDoctor);

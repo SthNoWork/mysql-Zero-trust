@@ -1,9 +1,15 @@
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
+
+import util.Hashing;
 
 public class CertificateSetup {
 
@@ -13,6 +19,7 @@ public class CertificateSetup {
     private static final File SERVER_DIR = new File("src/certs").getAbsoluteFile();
     private static final File CLIENT_DIR = new File("clients").getAbsoluteFile();
     private static final File SERVER_KEYSTORE = new File(SERVER_DIR, "server.p12");
+    private static final String USERS_CSV = "src/users.csv";
 
     public static void main(String[] args) {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
@@ -31,6 +38,7 @@ public class CertificateSetup {
                 System.out.println("1. Generate Server Keystore (Reset/Init)");
                 System.out.println("2. Create New Client Certificate");
                 System.out.println("3. List Client Certificates in Server Truststore");
+                System.out.println("5. Create Local CA and Trust It (Windows)");
                 System.out.println("4. Exit");
                 System.out.print("Choose option: ");
                 String choice = reader.readLine();
@@ -41,6 +49,8 @@ public class CertificateSetup {
                     generateClientCert(reader);
                 } else if ("3".equals(choice)) {
                     listClientCerts(reader);
+                } else if ("5".equals(choice)) {
+                    createAndTrustLocalCA(reader);
                 } else if ("4".equals(choice)) {
                     System.out.println("Exiting...");
                     break;
@@ -99,6 +109,13 @@ public class CertificateSetup {
             }
             System.out.println("🗑️ Cleared old client .p12 files from " + CLIENT_DIR.getPath());
         }
+        
+        // Clear users.csv since all certs are being reset
+        File usersFile = new File(USERS_CSV);
+        if (usersFile.exists()) {
+            usersFile.delete();
+            System.out.println("🗑️ Cleared users.csv (all client credentials removed)");
+        }
 
         String dname = String.format("CN=%s, OU=%s, O=%s, L=%s, ST=%s, C=%s", cn, ou, o, l, st, c);
         
@@ -119,10 +136,20 @@ public class CertificateSetup {
         }
 
         System.out.println("\n--- Generating Client Certificate ---");
-        String filename = prompt(reader, "Enter Client Filename (e.g. doctor)", null);
-        // if (filename == null || filename.trim().isEmpty()) return; // prompt handles null now
+        String filename = prompt(reader, "Enter Client Username (will be cert CN and login username)", null);
 
-        String clientPass = prompt(reader, "Enter Password for Client .p12", null);
+        String clientPass = prompt(reader, "Enter Password for Client .p12 file", null);
+        
+        // Ask for role
+        String role = prompt(reader, "Enter Role (doctor/nurse)", "doctor").toLowerCase();
+        if (!role.equals("doctor") && !role.equals("nurse")) {
+            System.out.println("❌ Invalid role. Must be 'doctor' or 'nurse'.");
+            return;
+        }
+        
+        // Ask for login password (separate from .p12 password for flexibility)
+        String loginPass = prompt(reader, "Enter LOGIN password (for web login, can differ from .p12 password)", clientPass);
+        
         String serverPass = prompt(reader, "Enter Server Keystore Password (to import cert)", null);
 
         // Default DNAME for client as requested (only ask for name/pass)
@@ -150,7 +177,7 @@ public class CertificateSetup {
 
         // 2. Export Public Cert
         runKeytool("-exportcert", "-alias", filename, "-keystore", p12File.getAbsolutePath(), 
-                   "-storepass", clientPass, "-file", cerFile.getAbsolutePath());
+               "-storepass", clientPass, "-file", cerFile.getAbsolutePath());
 
         // 3. Delete old alias from server truststore if exists (to allow re-issuing)
         try {
@@ -179,6 +206,21 @@ public class CertificateSetup {
             }
         }
         
+        // Compute fingerprint from exported cert before deleting
+        String certFingerprint = null;
+        try {
+            java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(cerFile)) {
+                java.security.cert.X509Certificate cert = (java.security.cert.X509Certificate) cf.generateCertificate(fis);
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] digest = md.digest(cert.getEncoded());
+                StringBuilder sb = new StringBuilder();
+                for (byte b : digest) sb.append(String.format("%02x", b));
+                certFingerprint = sb.toString();
+            }
+        } catch (Exception ex) {
+            System.out.println("⚠️ Could not compute certificate fingerprint: " + ex.getMessage());
+        }
         // Cleanup cer file
         if (cerFile.exists()) cerFile.delete();
         
@@ -189,6 +231,10 @@ public class CertificateSetup {
 
         System.out.println("✅ Client Certificate created: " + p12File.getPath());
         System.out.println("✅ Imported into Server Truststore.");
+
+        // 5. Add/Update user entry in users.csv (include cert fingerprint)
+        addOrUpdateUser(filename, role, loginPass, certFingerprint);
+        System.out.println("✅ User '" + filename + "' added to " + USERS_CSV + " with role: " + role);
 
         // Ask if this is for this machine or another device
         System.out.println("\n--- Certificate Distribution ---");
@@ -335,6 +381,7 @@ public class CertificateSetup {
             BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
             String line;
             int clientCount = 0;
+            @SuppressWarnings("unused")
             boolean inServerEntry = false;
             
             while ((line = br.readLine()) != null) {
@@ -412,6 +459,53 @@ public class CertificateSetup {
                 }
             }
             file.delete();
+        }
+    }
+    
+    /**
+     * Add or update a user entry in users.csv.
+     * If username already exists, it will be replaced.
+     * Format: username,role,password_hash[,cert_fingerprint]
+     */
+    private static void addOrUpdateUser(String username, String role, String password, String fingerprint) throws IOException {
+        File csvFile = new File(USERS_CSV);
+        List<String> lines = new ArrayList<>();
+        boolean found = false;
+        
+        // Read existing entries, skip the one we're updating
+        if (csvFile.exists()) {
+            try (BufferedReader br = new BufferedReader(new FileReader(csvFile))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    String[] parts = line.split(",");
+                    if (parts.length >= 1 && parts[0].equals(username)) {
+                        found = true;
+                        // Skip this line, we'll add updated version
+                    } else {
+                        lines.add(line);
+                    }
+                }
+            }
+        }
+        
+        // Add new/updated entry
+        String hash = Hashing.sha256(password);
+        String entry = username + "," + role + "," + hash;
+        if (fingerprint != null && !fingerprint.trim().isEmpty()) {
+            entry += "," + fingerprint.trim();
+        }
+        lines.add(entry);
+        
+        // Write back
+        try (PrintWriter pw = new PrintWriter(new FileWriter(csvFile))) {
+            for (String l : lines) {
+                pw.println(l);
+            }
+        }
+        
+        if (found) {
+            System.out.println("ℹ️ Updated existing user '" + username + "'");
         }
     }
 }
