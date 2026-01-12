@@ -191,8 +191,17 @@
     function showSection(id) {
         ['insert', 'search', 'update'].forEach(s => document.getElementById(`${s}-section`).classList.add('hidden'));
         document.getElementById(`${id}-section`).classList.remove('hidden');
+        // Clear status and search results
         document.getElementById('main-status').innerText = '';
+        document.getElementById('main-status').className = 'status';
         document.getElementById('results').innerHTML = '';
+        // Clear update section state to prevent crashes when switching back
+        document.getElementById('upd-results').innerHTML = '';
+        document.getElementById('update-form').classList.add('hidden');
+        currentUpdateRecords = [];
+        // Clear search input fields
+        document.getElementById('search-query').value = '';
+        document.getElementById('upd-search-query').value = '';
     }
 
     async function insertRecord() {

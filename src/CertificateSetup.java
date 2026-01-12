@@ -508,4 +508,91 @@ public class CertificateSetup {
             System.out.println("ℹ️ Updated existing user '" + username + "'");
         }
     }
+
+    /**
+     * Create a local Certificate Authority (CA) and trust it on Windows.
+     * This allows the browser to trust certificates signed by this CA.
+     */
+    private static void createAndTrustLocalCA(BufferedReader reader) throws Exception {
+        String os = System.getProperty("os.name").toLowerCase();
+        if (!os.contains("win")) {
+            System.out.println("⚠️ This operation is intended for Windows only.");
+            return;
+        }
+
+        File caKeystore = new File(SERVER_DIR, "localca.p12");
+        File caCert = new File(SERVER_DIR, "localca.cer");
+
+        String caPass = prompt(reader, "Enter password for Local CA keystore", "password");
+
+        if (caKeystore.exists()) {
+            System.out.println("⚠️ A local CA keystore already exists: " + caKeystore.getPath());
+            String ok = prompt(reader, "Overwrite existing Local CA? (yes/no)", "no");
+            if (!"yes".equalsIgnoreCase(ok)) {
+                System.out.println("Cancelled.");
+                return;
+            }
+            caKeystore.delete();
+            if (caCert.exists()) caCert.delete();
+        }
+
+        System.out.println("--- Generating Local CA (self-signed) ---");
+        String dname = "CN=LocalDevCA, OU=LocalDev, O=Local, L=Local, ST=Local, C=US";
+
+        // Generate CA keystore with basicConstraints=CA:true
+        runKeytool("-genkeypair", "-alias", "localca", "-keyalg", "RSA", "-keysize", "2048",
+                   "-storetype", "PKCS12", "-keystore", caKeystore.getAbsolutePath(),
+                   "-validity", "3650", "-storepass", caPass, "-dname", dname,
+                   "-ext", "basicConstraints=ca:true", "-ext", "keyUsage=keyCertSign,digitalSignature");
+
+        // Export CA cert
+        runKeytool("-exportcert", "-alias", "localca", "-keystore", caKeystore.getAbsolutePath(),
+                   "-storepass", caPass, "-file", caCert.getAbsolutePath());
+
+        System.out.println("✅ Local CA created: " + caKeystore.getPath());
+        System.out.println("✅ CA certificate exported: " + caCert.getPath());
+
+        // Import into Windows CurrentUser\Root (trusted root for current user)
+        System.out.println("--- Importing CA into Windows Trusted Root (CurrentUser) ---");
+        List<String> ps = new ArrayList<>();
+        ps.add("powershell");
+        ps.add("-NoProfile");
+        ps.add("-Command");
+        String cmd = "Import-Certificate -FilePath '" + caCert.getAbsolutePath().replace("'", "''") + "' -CertStoreLocation Cert:\\CurrentUser\\Root";
+        ps.add(cmd);
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder(ps);
+            pb.inheritIO();
+            Process p = pb.start();
+            int rc = p.waitFor();
+            if (rc == 0) {
+                System.out.println("✅ CA imported into CurrentUser\\Root (Trusted Root). Restart browsers if needed.");
+            } else {
+                System.out.println("❌ PowerShell returned exit code: " + rc + " — import may have failed.");
+            }
+        } catch (Exception e) {
+            System.out.println("❌ Failed to run PowerShell import: " + e.getMessage());
+        }
+
+        // Optionally import CA into server keystore so server trusts certs issued by this CA
+        if (SERVER_KEYSTORE.exists()) {
+            String serverPass = prompt(reader, "Enter Server Keystore Password to import CA (or leave blank to skip)", "");
+            if (serverPass != null && !serverPass.trim().isEmpty()) {
+                try {
+                    runKeytool("-importcert", "-alias", "localca", "-file", caCert.getAbsolutePath(),
+                               "-keystore", SERVER_KEYSTORE.getAbsolutePath(), "-storepass", serverPass, "-noprompt");
+                    System.out.println("✅ CA imported into server keystore: " + SERVER_KEYSTORE.getPath());
+                } catch (Exception e) {
+                    System.out.println("⚠️ Failed to import CA into server keystore: " + e.getMessage());
+                }
+            } else {
+                System.out.println("⚠️ Skipping import into server keystore.");
+            }
+        } else {
+            System.out.println("⚠️ Server keystore not found; skipped server import.");
+        }
+
+        System.out.println("--- Done. If you installed the CA, you may need to restart browsers or apps to pick it up.");
+    }
 }

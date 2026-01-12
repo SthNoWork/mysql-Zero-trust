@@ -1,0 +1,12 @@
+{
+  "name": "mysql-zero-trust",
+  "version": "1.0.0",
+  "description": "Hospital Record System with Zero Trust Architecture",
+  "scripts": {
+    "build": "javac -d bin -sourcepath src -cp \"lib/*\" src/WebMain.java src/CertificateSetup.java",
+    "start": "npm run build && java -cp \"bin;lib/*\" WebMain",
+    "cert": "npm run build && java -cp \"bin;lib/*\" CertificateSetup"
+  },
+  "keywords": ["java", "hospital", "zero-trust"],
+  "license": "ISC"
+}
