@@ -1,42 +1,48 @@
 # Quick Start Guide
 
-## 1. Database Setup (MySQL)
+## For Supabase
 
-Run in MySQL:
+### 1. Database Setup
+1. Open your Supabase project SQL Editor
+2. Run `Server/sql/postgresql.sql`
+3. Run `Server/sql/users.sql`
+
+### 2. Start Server
+```bash
+SUPABASE_START.bat
+```
+
+### 3. Accept Certificate
+Open `https://localhost:8000` in browser → accept self-signed cert warning
+
+### 4. Open Client
+Open `Client/index.html` → Login: `doctor_bob` / `password123`
+
+---
+
+## For MySQL
+
+### 1. Database Setup
 ```sql
 SOURCE Server/sql/mysql.sql
 SOURCE Server/sql/users.sql
 ```
 
-## 2. Start Server
+### 2. Edit config.properties
+Change `db.type=supabase` to `db.type=mysql` and uncomment MySQL settings
 
+### 3. Start
 ```bash
 cd Server
 START_SERVER.bat
 ```
 
-Server runs on `https://localhost:8000`
-
-**IMPORTANT:** Open `https://localhost:8000` in your browser and accept the self-signed certificate warning before using the client.
-
-## 3. Open Client
-
-Open `Client/index.html` in browser
-
-**Default test user (if you ran users.sql):**
-- Check the users.sql file for actual credentials
-- Password is hashed with SHA-256
-
-## 4. Load Keys
-
-After login, the app will prompt you to load your private key from `Client/keys/[role]_private.key`
-
 ---
 
 ## Troubleshooting
 
-**"Failed to fetch"** → Server not running or cert not accepted. Visit https://localhost:8000 first.
+**"Failed to fetch"** → Visit https://localhost:8000 first to accept cert
 
-**MySQL connection error** → Check `db.user` and `db.pass` in config.properties
+**Supabase errors** → Check RLS policies are created (postgresql.sql includes them)
 
-**Login fails** → Verify user exists in database with: `SELECT * FROM users;`
+**Login fails** → Verify user in Supabase: `SELECT * FROM users;`
