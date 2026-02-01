@@ -2,6 +2,7 @@ import com.sun.net.httpserver.*;
 import javax.net.ssl.*;
 import java.io.*;
 import java.net.*;
+import java.net.http.*;
 import java.nio.file.*;
 import java.security.*;
 import java.sql.*;
@@ -10,10 +11,17 @@ import java.util.*;
 public class Server {
     static Connection db;
     static Properties cfg = new Properties();
+    static HttpClient httpClient = HttpClient.newHttpClient();
+    static String TABLE, SCHEMA;
+    static boolean isSupabase;
 
     public static void main(String[] args) throws Exception {
         cfg.load(new FileInputStream("config.properties"));
-        connectDB();
+        TABLE = cfg.getProperty("db.table", "patient_records");
+        SCHEMA = cfg.getProperty("db.schema", "public");
+        isSupabase = "supabase".equals(cfg.getProperty("db.type"));
+        
+        if (!isSupabase) connectDB();
         
         int port = Integer.parseInt(cfg.getProperty("port", "8000"));
         HttpsServer srv = setupSSL(port);
@@ -25,6 +33,7 @@ public class Server {
         srv.start();
         
         System.out.println("Server running on https://localhost:" + port);
+        System.out.println("DB: " + (isSupabase ? "Supabase" : "MySQL"));
     }
 
     static void connectDB() throws Exception {
@@ -53,40 +62,77 @@ public class Server {
         try {
             if ("GET".equals(ex.getRequestMethod())) {
                 String q = ex.getRequestURI().getQuery();
-                String sql = "SELECT * FROM patient_records" + (q != null && q.contains("id=") ? " WHERE hashed_patient_id=?" : "");
-                PreparedStatement ps = db.prepareStatement(sql);
-                if (q != null && q.contains("id=")) ps.setString(1, q.split("id=")[1].split("&")[0]);
-                ResultSet rs = ps.executeQuery();
-                StringBuilder json = new StringBuilder("[");
-                while (rs.next()) {
-                    if (json.length() > 1) json.append(",");
-                    json.append("{\"hashedPatientId\":\"").append(rs.getString("hashed_patient_id")).append("\"");
-                    json.append(",\"encryptedName\":\"").append(esc(rs.getString("encrypted_name"))).append("\"");
-                    json.append(",\"encryptedDiagnosis\":\"").append(esc(rs.getString("encrypted_diagnosis"))).append("\"");
-                    json.append(",\"encryptedTreatment\":\"").append(esc(rs.getString("encrypted_treatment"))).append("\"");
-                    json.append(",\"encryptedPrescription\":\"").append(esc(rs.getString("encrypted_prescription"))).append("\"");
-                    json.append(",\"createdByRole\":\"").append(rs.getString("created_by_role")).append("\"");
-                    json.append(",\"allowedRoles\":\"").append(rs.getString("allowed_roles")).append("\"}");
-                }
-                json.append("]");
-                send(ex, 200, json.toString());
+                String hid = q != null && q.contains("id=") ? q.split("id=")[1].split("&")[0] : null;
+                String json = isSupabase ? supabaseGet(hid) : mysqlGet(hid);
+                send(ex, 200, json);
             } else if ("POST".equals(ex.getRequestMethod())) {
                 String body = new String(ex.getRequestBody().readAllBytes());
-                Map<String,String> d = parseJson(body);
-                PreparedStatement ps = db.prepareStatement("INSERT INTO patient_records (hashed_patient_id,encrypted_name,encrypted_diagnosis,encrypted_treatment,encrypted_prescription,created_by_role,allowed_roles) VALUES (?,?,?,?,?,?,?)");
-                ps.setString(1, d.get("hashedPatientId"));
-                ps.setString(2, d.get("encryptedName"));
-                ps.setString(3, d.get("encryptedDiagnosis"));
-                ps.setString(4, d.get("encryptedTreatment"));
-                ps.setString(5, d.get("encryptedPrescription"));
-                ps.setString(6, d.getOrDefault("createdByRole", "unknown"));
-                ps.setString(7, d.getOrDefault("allowedRoles", "doctor,nurse"));
-                ps.executeUpdate();
+                if (isSupabase) supabasePost(body); else mysqlPost(body);
                 send(ex, 201, "{\"ok\":true}");
             } else if ("OPTIONS".equals(ex.getRequestMethod())) {
                 ex.sendResponseHeaders(204, -1);
             }
-        } catch (Exception e) { send(ex, 500, "{\"error\":\"" + e.getMessage() + "\"}"); }
+        } catch (Exception e) { e.printStackTrace(); send(ex, 500, "{\"error\":\"" + e.getMessage() + "\"}"); }
+    }
+
+    static String mysqlGet(String hid) throws Exception {
+        String sql = "SELECT * FROM " + TABLE + (hid != null ? " WHERE hashed_patient_id=?" : "");
+        PreparedStatement ps = db.prepareStatement(sql);
+        if (hid != null) ps.setString(1, hid);
+        ResultSet rs = ps.executeQuery();
+        StringBuilder json = new StringBuilder("[");
+        while (rs.next()) {
+            if (json.length() > 1) json.append(",");
+            json.append("{\"hashedPatientId\":\"").append(rs.getString("hashed_patient_id")).append("\"");
+            json.append(",\"encryptedName\":\"").append(esc(rs.getString("encrypted_name"))).append("\"");
+            json.append(",\"encryptedDiagnosis\":\"").append(esc(rs.getString("encrypted_diagnosis"))).append("\"");
+            json.append(",\"encryptedTreatment\":\"").append(esc(rs.getString("encrypted_treatment"))).append("\"");
+            json.append(",\"encryptedPrescription\":\"").append(esc(rs.getString("encrypted_prescription"))).append("\"");
+            json.append(",\"createdByRole\":\"").append(rs.getString("created_by_role")).append("\"");
+            json.append(",\"allowedRoles\":\"").append(rs.getString("allowed_roles")).append("\"}");
+        }
+        return json.append("]").toString();
+    }
+
+    static void mysqlPost(String body) throws Exception {
+        Map<String,String> d = parseJson(body);
+        PreparedStatement ps = db.prepareStatement("INSERT INTO " + TABLE + " (hashed_patient_id,encrypted_name,encrypted_diagnosis,encrypted_treatment,encrypted_prescription,created_by_role,allowed_roles) VALUES (?,?,?,?,?,?,?)");
+        ps.setString(1, d.get("hashedPatientId"));
+        ps.setString(2, d.get("encryptedName"));
+        ps.setString(3, d.get("encryptedDiagnosis"));
+        ps.setString(4, d.get("encryptedTreatment"));
+        ps.setString(5, d.get("encryptedPrescription"));
+        ps.setString(6, d.getOrDefault("createdByRole", "unknown"));
+        ps.setString(7, d.getOrDefault("allowedRoles", "doctor,nurse"));
+        ps.executeUpdate();
+    }
+
+    static String supabaseGet(String hid) throws Exception {
+        String url = cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?select=*" + (hid != null ? "&hashed_patient_id=eq." + hid : "");
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url))
+            .header("apikey", cfg.getProperty("supabase.key"))
+            .header("Authorization", "Bearer " + cfg.getProperty("supabase.key")).GET().build();
+        String resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString()).body();
+        // Convert Supabase JSON to our format
+        return resp.replace("hashed_patient_id", "hashedPatientId")
+                   .replace("encrypted_name", "encryptedName")
+                   .replace("encrypted_diagnosis", "encryptedDiagnosis")
+                   .replace("encrypted_treatment", "encryptedTreatment")
+                   .replace("encrypted_prescription", "encryptedPrescription")
+                   .replace("created_by_role", "createdByRole")
+                   .replace("allowed_roles", "allowedRoles");
+    }
+
+    static void supabasePost(String body) throws Exception {
+        Map<String,String> d = parseJson(body);
+        String json = String.format("{\"hashed_patient_id\":\"%s\",\"encrypted_name\":\"%s\",\"encrypted_diagnosis\":\"%s\",\"encrypted_treatment\":\"%s\",\"encrypted_prescription\":\"%s\",\"created_by_role\":\"%s\",\"allowed_roles\":\"%s\"}",
+            d.get("hashedPatientId"), esc(d.get("encryptedName")), esc(d.get("encryptedDiagnosis")), esc(d.get("encryptedTreatment")), esc(d.get("encryptedPrescription")), d.getOrDefault("createdByRole","unknown"), d.getOrDefault("allowedRoles","doctor,nurse"));
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE))
+            .header("apikey", cfg.getProperty("supabase.key"))
+            .header("Authorization", "Bearer " + cfg.getProperty("supabase.key"))
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=minimal").POST(HttpRequest.BodyPublishers.ofString(json)).build();
+        httpClient.send(req, HttpResponse.BodyHandlers.ofString());
     }
 
     static void handleLogin(HttpExchange ex) throws IOException {

@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>E2EE Hospital</title>
-<style>*{box-sizing:border-box;font-family:system-ui}body{background:#1a1a2e;color:#eee;margin:0;min-height:100vh}.hdr{background:#0f3460;padding:12px 20px;display:flex;justify-content:space-between;align-items:center}.hdr h1{margin:0;font-size:18px}.ks{display:flex;align-items:center;gap:8px}.dot{width:10px;height:10px;border-radius:50%;background:#f44}.dot.on{background:#0f8;box-shadow:0 0 8px #0f8}.cnt{max-width:900px;margin:15px auto;padding:0 15px}.card{background:#16213e;border-radius:8px;padding:15px;margin:15px 0}h2{color:#0af;margin-top:0}label{display:block;margin:8px 0 4px;color:#aaa;font-size:13px}input,textarea,select{width:100%;padding:10px;border:1px solid #0f3460;border-radius:4px;background:#0a0a15;color:#fff}textarea{min-height:60px}button{padding:10px 18px;border:none;border-radius:4px;cursor:pointer;margin:3px}.p{background:#0af;color:#000}.s{background:#0f8;color:#000}.r{display:flex;gap:10px}.r>*{flex:1}.list{max-height:350px;overflow-y:auto}.item{background:#0f3460;padding:12px;border-radius:4px;margin:8px 0;cursor:pointer}.item:hover{background:#1a4a7a}.item h3{margin:0 0 4px;color:#0af;font-size:14px}.item small{color:#888}.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.8);z-index:100;align-items:center;justify-content:center}.modal.on{display:flex}.mc{background:#16213e;padding:25px;border-radius:8px;max-width:500px;width:90%}.x{float:right;font-size:20px;cursor:pointer;color:#888}.tabs{display:flex;gap:4px}.tab{padding:8px 15px;background:#0f3460;border-radius:4px 4px 0 0;cursor:pointer}.tab.a{background:#16213e;color:#0af}.h{display:none}.alert{padding:12px;border-radius:4px;margin:8px 0}.ok{background:#0f83;border:1px solid #0f8}.err{background:#f443;border:1px solid #f44}.info{background:#0af3;border:1px solid #0af}#kf{display:none}</style></head>
+<style>*{box-sizing:border-box;font-family:system-ui}body{background:#1a1a2e;color:#eee;margin:0;min-height:100vh}.hdr{background:#0f3460;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}.hdr h1{margin:0;font-size:18px}.ks{display:flex;align-items:center;gap:8px}.dot{width:10px;height:10px;border-radius:50%;background:#f44}.dot.on{background:#0f8;box-shadow:0 0 8px #0f8}.cnt{max-width:900px;margin:15px auto;padding:0 15px}.card{background:#16213e;border-radius:8px;padding:15px;margin:15px 0}h2{color:#0af;margin-top:0}label{display:block;margin:8px 0 4px;color:#aaa;font-size:13px}input,textarea,select{width:100%;padding:10px;border:1px solid #0f3460;border-radius:4px;background:#0a0a15;color:#fff}textarea{min-height:60px}button{padding:10px 18px;border:none;border-radius:4px;cursor:pointer;margin:3px}.p{background:#0af;color:#000}.s{background:#0f8;color:#000}.r{display:flex;gap:10px}.r>*{flex:1}.list{max-height:350px;overflow-y:auto}.item{background:#0f3460;padding:12px;border-radius:4px;margin:8px 0;cursor:pointer}.item:hover{background:#1a4a7a}.item h3{margin:0 0 4px;color:#0af;font-size:14px}.item small{color:#888}.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.8);z-index:100;align-items:center;justify-content:center}.modal.on{display:flex}.mc{background:#16213e;padding:25px;border-radius:8px;max-width:500px;width:90%}.x{float:right;font-size:20px;cursor:pointer;color:#888}.tabs{display:flex;gap:4px;flex-wrap:wrap}.tab{padding:8px 15px;background:#0f3460;border-radius:4px 4px 0 0;cursor:pointer}.tab.a{background:#16213e;color:#0af}.h{display:none}.alert{padding:12px;border-radius:4px;margin:8px 0}.ok{background:#0f83;border:1px solid #0f8}.err{background:#f443;border:1px solid #f44}.info{background:#0af3;border:1px solid #0af}#kf,#pkf{display:none}</style></head>
 <body>
 <div class="hdr"><h1>🏥 E2EE Hospital</h1><div class="ks"><span id="kst">No key</span><div class="dot" id="ksd"></div><button class="p" onclick="document.getElementById('kf').click()">🔑 Load Key</button><input type="file" id="kf" accept=".key,.pem" onchange="loadKey(this)"></div></div>
 
 <div class="cnt">
 <div id="km" class="modal on"><div class="mc"><h2>🔐 Load Private Key</h2><p>Required for decryption. Never leaves your device.</p><div class="alert info">Get your key from the administrator.</div><label>Private Key (.key)</label><input type="file" id="ikf" accept=".key,.pem" onchange="loadKey(this);closeKM()"><br><button class="s" onclick="document.getElementById('ikf').click()">📂 Browse</button></div></div>
 
-<div class="tabs"><div class="tab a" onclick="tab('view')">📋 Records</div><div class="tab" onclick="tab('add')">➕ Add</div><div class="tab" onclick="tab('cfg')">⚙️ Config</div></div>
+<div class="tabs"><div class="tab a" onclick="tab(event,'view')">📋 Records</div><div class="tab" onclick="tab(event,'add')">➕ Add</div><div class="tab" onclick="tab(event,'cfg')">⚙️ Config</div></div>
 
 <div id="view" class="card">
 <h2>📋 Records</h2>
@@ -29,8 +29,12 @@
 <div id="cfg" class="card h">
 <h2>⚙️ Configuration</h2>
 <label>Server URL</label><input id="surl" value="https://localhost:8000">
-<label>Load Public Keys</label>
-<input type="file" id="pkf" accept=".key,.pem" multiple onchange="loadPubKeys(this)">
+<label>My Role</label><select id="myrole" onchange="myRole=this.value"><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select>
+<div class="alert info" style="margin-top:10px">Doctor: Create, Read, Update | Nurse: Create, Read</div>
+<br>
+<label>Load Public Keys (for encrypting to roles)</label>
+<input type="file" id="pkf" accept=".key,.pem" multiple>
+<button class="p" onclick="document.getElementById('pkf').click()">📂 Select Public Keys</button>
 <div id="pkstat"></div>
 </div>
 
@@ -39,22 +43,30 @@
 
 <script>
 const C={
-  async genAES(){return crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
-  async enc(txt,key){const iv=crypto.getRandomValues(new Uint8Array(12)),e=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(txt));return{data:this.toB64(e),iv:this.toB64(iv)}},
-  async dec(data,iv,key){return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:this.fromB64(iv)},key,this.fromB64(data)))},
-  async encKey(aes,rsa){const r=await crypto.subtle.exportKey('raw',aes);return this.toB64(await crypto.subtle.encrypt({name:'RSA-OAEP'},rsa,r))},
-  async decKey(enc,rsa){const r=await crypto.subtle.decrypt({name:'RSA-OAEP'},rsa,this.fromB64(enc));return crypto.subtle.importKey('raw',r,{name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
-  async impPub(pem){return crypto.subtle.importKey('spki',this.pemToBin(pem,'PUBLIC KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['encrypt'])},
-  async impPriv(pem){return crypto.subtle.importKey('pkcs8',this.pemToBin(pem,'PRIVATE KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['decrypt'])},
-  async hash(s){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')},
-  toB64(b){return btoa(String.fromCharCode(...new Uint8Array(b)))},
+  async genAES(){return window.crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
+  async enc(txt,key){const iv=window.crypto.getRandomValues(new Uint8Array(12)),e=await window.crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(txt));return{data:this.toB64(e),iv:this.toB64(iv)}},
+  async dec(data,iv,key){return new TextDecoder().decode(await window.crypto.subtle.decrypt({name:'AES-GCM',iv:this.fromB64(iv)},key,this.fromB64(data)))},
+  async encKey(aes,rsa){const r=await window.crypto.subtle.exportKey('raw',aes);return this.toB64(await window.crypto.subtle.encrypt({name:'RSA-OAEP'},rsa,r))},
+  async decKey(enc,rsa){const r=await window.crypto.subtle.decrypt({name:'RSA-OAEP'},rsa,this.fromB64(enc));return window.crypto.subtle.importKey('raw',r,{name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
+  async impPub(pem){return window.crypto.subtle.importKey('spki',this.pemToBin(pem,'PUBLIC KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['encrypt'])},
+  async impPriv(pem){return window.crypto.subtle.importKey('pkcs8',this.pemToBin(pem,'PRIVATE KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['decrypt'])},
+  async hash(s){const h=await window.crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')},
+  toB64(b){let s='';const a=new Uint8Array(b);for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s)},
   fromB64(s){const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a.buffer},
   pemToBin(p,t){return this.fromB64(p.replace(`-----BEGIN ${t}-----`,'').replace(`-----END ${t}-----`,'').replace(/\s/g,''))}
 };
 
 let privKey=null,pubKeys={},API='https://localhost:8000';
 
-function tab(id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('a'));document.querySelectorAll('.card').forEach(c=>c.classList.add('h'));event.target.classList.add('a');document.getElementById(id).classList.remove('h')}
+document.getElementById('pkf').onchange=async function(){
+  for(const f of this.files){
+    const name=f.name.replace('_public.key','').replace('.key','');
+    try{pubKeys[name]=await C.impPub(await f.text())}catch(e){console.error(e)}
+  }
+  document.getElementById('pkstat').innerHTML=`<div class="alert ok">Loaded: ${Object.keys(pubKeys).join(', ')}</div>`;
+};
+
+function tab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('a'));document.querySelectorAll('.card').forEach(c=>c.classList.add('h'));e.target.classList.add('a');document.getElementById(id).classList.remove('h')}
 function closeKM(){document.getElementById('km').classList.remove('on')}
 function closeRM(){document.getElementById('rm').classList.remove('on')}
 
@@ -65,14 +77,6 @@ async function loadKey(inp){
     document.getElementById('ksd').classList.add('on');
     closeKM();loadAll();
   }catch(e){alert('Bad key: '+e.message)}
-}
-
-async function loadPubKeys(inp){
-  for(const f of inp.files){
-    const name=f.name.replace('_public.key','').replace('.key','');
-    pubKeys[name]=await C.impPub(await f.text());
-  }
-  document.getElementById('pkstat').innerHTML=`<div class="alert ok">Loaded: ${Object.keys(pubKeys).join(', ')}</div>`;
 }
 
 async function loadAll(){
@@ -94,21 +98,29 @@ async function search(){
 }
 
 function showRecords(arr){
-  if(!arr.length){document.getElementById('rlist').innerHTML='<div class="alert info">No records</div>';return}
-  document.getElementById('rlist').innerHTML=arr.map(r=>`<div class="item" onclick="viewRec('${r.hashedPatientId}')"><h3>Patient: ${r.hashedPatientId.slice(0,12)}...</h3><small>Role: ${r.createdByRole||'?'}</small></div>`).join('');
+  if(!arr||!arr.length){document.getElementById('rlist').innerHTML='<div class="alert info">No records</div>';return}
+  document.getElementById('rlist').innerHTML=arr.map(r=>`<div class="item" onclick="viewRec('${r.hashedPatientId}')"><h3>Patient: ${(r.hashedPatientId||'').slice(0,12)}...</h3><small>Role: ${r.createdByRole||'?'}</small></div>`).join('');
 }
+
+let myRole='doctor',curRec=null;
 
 async function viewRec(hid){
   if(!privKey){alert('Load key first');return}
   try{
-    const arr=await(await fetch(API+'/api/records?id='+hid)).json(),r=arr[0]||arr;
+    const arr=await(await fetch(API+'/api/records?id='+hid)).json(),r=arr[0]||arr;curRec=r;
     const dec={};
     for(const f of['encryptedName','encryptedDiagnosis','encryptedTreatment','encryptedPrescription']){
       if(r[f])try{const p=JSON.parse(atob(r[f])),k=await C.decKey(p.keys[Object.keys(p.keys)[0]],privKey);dec[f.replace('encrypted','')]=await C.dec(p.data,p.iv,k)}catch{dec[f.replace('encrypted','')]='[Cannot decrypt]'}
     }
-    document.getElementById('rd').innerHTML=`<p><b>ID:</b> ${r.hashedPatientId}</p><p><b>Name:</b> ${dec.Name||'-'}</p><p><b>Diagnosis:</b> ${dec.Diagnosis||'-'}</p><p><b>Treatment:</b> ${dec.Treatment||'-'}</p><p><b>Prescription:</b> ${dec.Prescription||'-'}</p><p><b>Roles:</b> ${r.allowedRoles}</p>`;
+    const canU=myRole==='doctor';
+    document.getElementById('rd').innerHTML=`<p><b>ID:</b> ${r.hashedPatientId}</p><p><b>Name:</b> ${dec.Name||'-'}</p><p><b>Diagnosis:</b> ${dec.Diagnosis||'-'}</p><p><b>Treatment:</b> ${dec.Treatment||'-'}</p><p><b>Prescription:</b> ${dec.Prescription||'-'}</p><p><b>Roles:</b> ${r.allowedRoles}</p>${canU?'<br><button class="s" onclick="editRec()">✏️ Edit</button>':''}`;
     document.getElementById('rm').classList.add('on');
   }catch(e){alert('Error: '+e.message)}
+}
+
+async function editRec(){
+  if(myRole!=='doctor'){alert('Only doctors can update');return}
+  alert('Edit mode - implement update form as needed');
 }
 
 async function createRecord(){

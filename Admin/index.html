@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>E2EE Admin</title>
+<style>*{box-sizing:border-box;font-family:system-ui}body{background:#1a1a2e;color:#eee;margin:0;padding:20px}.c{max-width:750px;margin:0 auto}.card{background:#16213e;border-radius:8px;padding:20px;margin:15px 0}h1{text-align:center;color:#0af}h2{color:#0af;margin-top:0;font-size:16px}h3{color:#0cf;margin:15px 0 8px;font-size:14px}label{display:block;margin:8px 0 4px;color:#aaa;font-size:13px}input,select{width:100%;padding:10px;border:1px solid #0f3460;border-radius:4px;background:#0a0a15;color:#fff}button{padding:10px 16px;border:none;border-radius:4px;cursor:pointer;margin:4px;font-size:13px}.p{background:#0af;color:#000}.s{background:#0f8;color:#000}.w{background:#f80;color:#000}.tabs{display:flex;gap:4px;flex-wrap:wrap}.tab{padding:8px 12px;background:#0f3460;border-radius:4px 4px 0 0;cursor:pointer;font-size:13px}.tab.a{background:#16213e;color:#0af}.out{background:#0a0a15;padding:10px;border-radius:4px;font-family:monospace;white-space:pre-wrap;margin:8px 0;font-size:11px;max-height:150px;overflow:auto}.r{display:flex;gap:10px}.r>*{flex:1}.h{display:none}.ok{color:#0f8}.usr{background:#0f3460;padding:10px;border-radius:4px;margin:5px 0;display:flex;justify-content:space-between;align-items:center}</style></head>
+<body><div class="c"><h1>🔧 E2EE Admin Panel</h1>
+<div class="tabs">
+<div class="tab a" onclick="tab(event,'db')">Database</div>
+<div class="tab" onclick="tab(event,'users')">Users</div>
+<div class="tab" onclick="tab(event,'keys')">RSA Keys</div>
+<div class="tab" onclick="tab(event,'scert')">Server Cert</div>
+<div class="tab" onclick="tab(event,'ccert')">Client Certs</div>
+</div>
+
+<!-- DATABASE -->
+<div id="db" class="card">
+<h2>📦 Database Config</h2>
+<label>Type</label>
+<select id="dbt" onchange="toggleDB()"><option value="mysql">MySQL</option><option value="supabase">Supabase</option></select>
+<div id="mysqlcfg">
+<div class="r"><div><label>Host</label><input id="dbh" value="localhost"></div><div><label>Port</label><input id="dbp" value="3306"></div></div>
+<div class="r"><div><label>Database</label><input id="dbn" value="hospital"></div><div><label>User</label><input id="dbu" value="root"></div></div>
+<label>Password</label><input type="password" id="dbpw">
+</div>
+<div id="supacfg" class="h">
+<label>Supabase URL</label><input id="surl" placeholder="https://xxx.supabase.co">
+<label>Anon Key</label><input id="skey" placeholder="eyJ...">
+<label>Schema</label><input id="sch" value="public">
+</div>
+<label>Table</label><input id="tbl" value="patient_records">
+<label>Server Port</label><input id="sp" value="8000">
+<br><br><button class="s" onclick="dlConfig()">📥 Download config.properties</button>
+</div>
+
+<!-- USERS -->
+<div id="users" class="card h">
+<h2>👥 User Management</h2>
+<p style="color:#888;font-size:12px">Create users with hashed passwords. Download SQL to insert.</p>
+<div class="r"><div><label>Username</label><input id="uname"></div><div><label>Role</label><select id="urole"><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select></div></div>
+<label>Password</label><input type="password" id="upass">
+<br><br><button class="s" onclick="addUser()">➕ Add User</button>
+<div id="ulist"></div>
+<br><button class="p" onclick="dlUsers()">📥 Download users.sql</button>
+</div>
+
+<!-- RSA KEYS -->
+<div id="keys" class="card h">
+<h2>🔑 RSA Key Pairs</h2>
+<p style="color:#888;font-size:12px">Public keys → Client/keys/. Private key → user only.</p>
+<label>For Role</label><select id="kr"><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select>
+<br><br><button class="s" onclick="genKeys()">⚡ Generate</button>
+<div id="ko" class="h"><div class="out" id="kout"></div>
+<button class="p" onclick="dlPub()">📥 Public Key</button>
+<button class="s" onclick="dlPriv()">📥 Private Key</button></div>
+</div>
+
+<!-- SERVER CERT -->
+<div id="scert" class="card h">
+<h2>📜 Server Certificate (mTLS)</h2>
+<p style="color:#888;font-size:12px">server.p12 = server identity. server.cer = give to clients to verify server.</p>
+<div class="r"><div><label>CN (hostname)</label><input id="scn" value="localhost"></div><div><label>Password</label><input id="scp" value="password"></div></div>
+<label>Validity (days)</label><input id="sval" value="3650">
+<br><br>
+<button class="s" onclick="dlServerP12()">📥 generate_server.bat</button>
+<button class="w" onclick="dlServerCer()">📥 export_server_public.bat</button>
+<div id="scout" class="out h"></div>
+</div>
+
+<!-- CLIENT CERTS -->
+<div id="ccert" class="card h">
+<h2>📜 Client Certificates (mTLS)</h2>
+<p style="color:#888;font-size:12px">Each client needs .p12. Server needs their .cer in truststore.</p>
+<div class="r"><div><label>Client Name</label><input id="ccn" placeholder="doctor_smith"></div><div><label>Role</label><select id="ccr"><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select></div></div>
+<label>Password</label><input id="ccp" value="clientpass">
+<br><br>
+<button class="s" onclick="dlClientP12()">📥 generate_[name].bat (give to client)</button>
+<button class="w" onclick="dlClientTrust()">📥 add_to_truststore.bat (run on server)</button>
+<h3>📋 Client Package</h3>
+<button class="p" onclick="dlClientPkg()">📥 Download full client package</button>
+</div>
+</div>
+
+<script>
+let keys={pub:'',priv:''},users=[];
+
+function tab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('a'));document.querySelectorAll('.card').forEach(c=>c.classList.add('h'));e.target.classList.add('a');document.getElementById(id).classList.remove('h')}
+function toggleDB(){const s=document.getElementById('dbt').value==='supabase';document.getElementById('mysqlcfg').classList.toggle('h',s);document.getElementById('supacfg').classList.toggle('h',!s)}
+function dl(name,content){const b=new Blob([content],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(a.href)}
+
+// CONFIG
+function dlConfig(){
+  const t=document.getElementById('dbt').value;
+  let cfg=`port=${document.getElementById('sp').value}\ndb.type=${t}\ndb.table=${document.getElementById('tbl').value}\n\n# mTLS\nmtls.enabled=true\nmtls.keystore=certs/server.p12\nmtls.truststore=certs/truststore.p12\nmtls.password=password\n\n`;
+  if(t==='mysql')cfg+=`db.host=${document.getElementById('dbh').value}\ndb.port=${document.getElementById('dbp').value}\ndb.name=${document.getElementById('dbn').value}\ndb.user=${document.getElementById('dbu').value}\ndb.pass=${document.getElementById('dbpw').value}`;
+  else cfg+=`supabase.url=${document.getElementById('surl').value}\nsupabase.key=${document.getElementById('skey').value}\ndb.schema=${document.getElementById('sch').value}`;
+  dl('config.properties',cfg);
+}
+
+// USERS
+async function sha256(s){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function addUser(){
+  const u=document.getElementById('uname').value,p=document.getElementById('upass').value,r=document.getElementById('urole').value;
+  if(!u||!p){alert('Fill all');return}
+  users.push({username:u,role:r,hash:await sha256(p)});
+  document.getElementById('ulist').innerHTML=users.map((u,i)=>`<div class="usr"><span>${u.username} (${u.role})</span><button onclick="users.splice(${i},1);this.parentElement.remove()">✕</button></div>`).join('');
+  document.getElementById('uname').value='';document.getElementById('upass').value='';
+}
+function dlUsers(){
+  if(!users.length){alert('Add users first');return}
+  dl('users.sql',users.map(u=>`INSERT INTO users (username, password_hash, role) VALUES ('${u.username}', '${u.hash}', '${u.role}');`).join('\n'));
+}
+
+// RSA KEYS
+async function genKeys(){
+  try{
+    const kp=await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);
+    keys.pub=toPem(await crypto.subtle.exportKey('spki',kp.publicKey),'PUBLIC KEY');
+    keys.priv=toPem(await crypto.subtle.exportKey('pkcs8',kp.privateKey),'PRIVATE KEY');
+    document.getElementById('kout').textContent=document.getElementById('kr').value+' keys generated!\n\n'+keys.pub.substring(0,100)+'...';
+    document.getElementById('ko').classList.remove('h');
+  }catch(e){alert('Error: '+e.message)}
+}
+function toPem(buf,type){const b64=btoa(String.fromCharCode.apply(null,new Uint8Array(buf)));return`-----BEGIN ${type}-----\n${b64.match(/.{1,64}/g).join('\n')}\n-----END ${type}-----`}
+function dlPub(){dl(document.getElementById('kr').value+'_public.key',keys.pub)}
+function dlPriv(){dl(document.getElementById('kr').value+'_private.key',keys.priv)}
+
+// SERVER CERT
+function dlServerP12(){
+  const cn=document.getElementById('scn').value,pw=document.getElementById('scp').value,days=document.getElementById('sval').value;
+  dl('generate_server.bat',`@echo off
+echo Generating server.p12...
+keytool -genkeypair -alias server -keyalg RSA -keysize 2048 -storetype PKCS12 -keystore server.p12 -validity ${days} -storepass ${pw} -dname "CN=${cn}"
+echo.
+echo Done! Place server.p12 in Server/certs/
+pause`);
+}
+function dlServerCer(){
+  const pw=document.getElementById('scp').value;
+  dl('export_server_public.bat',`@echo off
+echo Exporting server public cert...
+keytool -exportcert -alias server -keystore server.p12 -storepass ${pw} -file server.cer
+echo.
+echo Done! Give server.cer to all clients.
+echo Clients place it in Client/certs/server.cer
+pause`);
+}
+
+// CLIENT CERT
+function dlClientP12(){
+  const cn=document.getElementById('ccn').value,role=document.getElementById('ccr').value,pw=document.getElementById('ccp').value;
+  if(!cn){alert('Enter name');return}
+  dl(`generate_${cn}.bat`,`@echo off
+echo Generating ${cn}.p12...
+keytool -genkeypair -alias ${cn} -keyalg RSA -keysize 2048 -storetype PKCS12 -keystore ${cn}.p12 -validity 3650 -storepass ${pw} -dname "CN=${cn},OU=${role}"
+echo.
+echo Done! Give ${cn}.p12 to the client.
+echo Client places it in Client/certs/${cn}.p12
+pause`);
+}
+function dlClientTrust(){
+  const cn=document.getElementById('ccn').value,pw=document.getElementById('ccp').value;
+  if(!cn){alert('Enter name');return}
+  dl(`add_${cn}_to_server.bat`,`@echo off
+echo Exporting ${cn} public cert...
+keytool -exportcert -alias ${cn} -keystore ${cn}.p12 -storepass ${pw} -file ${cn}.cer
+
+echo Adding to server truststore...
+keytool -importcert -alias ${cn} -keystore truststore.p12 -storepass password -file ${cn}.cer -noprompt
+
+echo.
+echo Done! Place truststore.p12 in Server/certs/
+pause`);
+}
+function dlClientPkg(){
+  const cn=document.getElementById('ccn').value,pw=document.getElementById('ccp').value,role=document.getElementById('ccr').value;
+  if(!cn){alert('Enter name');return}
+  dl(`CLIENT_SETUP_${cn}.txt`,`CLIENT SETUP FOR: ${cn} (${role})
+================================
+
+1. Run generate_${cn}.bat to create your certificate
+2. Get server.cer from administrator  
+3. Get your RSA private key (${role}_private.key) from administrator
+4. Get all public keys (doctor_public.key, nurse_public.key)
+
+Place in Client folder:
+  Client/
+    certs/
+      ${cn}.p12        (your certificate)
+      server.cer       (to verify server)
+    keys/
+      ${role}_private.key   (YOUR private key - never share!)
+      doctor_public.key     (for encrypting to doctors)
+      nurse_public.key      (for encrypting to nurses)
+    index.html
+
+5. Open Client/index.html
+6. Load your private key
+7. Load public keys in Config tab
+8. Set server URL
+
+Password for ${cn}.p12: ${pw}`);
+}
+</script></body></html>
