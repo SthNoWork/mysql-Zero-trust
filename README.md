@@ -8,92 +8,107 @@ End-to-end encrypted medical records. Server never sees plaintext.
 | Doctor | ✓ | ✓ | ✓ | ✗ |
 | Nurse | ✓ | ✓ | ✗ | ✗ |
 
-## Quick Setup
+---
 
-### 1. Admin Panel (run first)
-Open `Admin/index.html` in browser.
+## .BAT Files - Where & Order
 
-**Generate in this order:**
+### Step 1: Server Certificate (Admin runs)
+| File | Run In | Output | Purpose |
+|------|--------|--------|---------|
+| `generate_server.bat` | `Server/certs/` | `server.p12` | Server's identity |
+| `export_server_public.bat` | `Server/certs/` | `server.cer` | Give to ALL clients |
 
+### Step 2: Client Certificates (Per user)
+| File | Run In | Output | Purpose |
+|------|--------|--------|---------|
+| `generate_[name].bat` | `Client/certs/` | `[name].p12` | Client runs this themselves |
+| `add_[name]_to_server.bat` | `Server/certs/` | Updates `truststore.p12` | Admin runs after getting client cert |
+
+### Order of Operations
 ```
-Admin/index.html
-├── RSA Keys tab     → doctor_public.key, doctor_private.key
-│                    → nurse_public.key, nurse_private.key
-├── Server Cert tab  → generate_server.bat, export_server_public.bat
-├── Client Certs tab → generate_[name].bat, add_[name]_to_server.bat
-├── Users tab        → users.sql
-└── Database tab     → config.properties
-```
-
-### 2. Server Setup
-
-```
-Server/
-├── certs/
-│   ├── server.p12      ← Run generate_server.bat HERE
-│   └── truststore.p12  ← Run add_[name]_to_server.bat HERE
-├── config.properties   ← From Admin
-├── Server.java
-└── sql/
-    └── mysql.sql       ← Run in MySQL + users.sql
+1. Admin: generate_server.bat        → Server/certs/server.p12
+2. Admin: export_server_public.bat   → Server/certs/server.cer
+3. Admin: Copy server.cer to each    → Client/certs/server.cer
+4. Client: generate_[name].bat       → Client/certs/[name].p12
+5. Client: Send [name].cer to Admin  
+6. Admin: add_[name]_to_server.bat   → Server/certs/truststore.p12
 ```
 
-**Commands (run in Server/certs/):**
-```batch
-# 1. Generate server cert
-generate_server.bat
+---
 
-# 2. Export for clients
-export_server_public.bat
+## Where Keys Go
 
-# 3. For each client
-add_doctor_smith_to_server.bat
+### Client Private Key Location
+```
+Client/
+└── keys/
+    └── [role]_private.key    ← YOUR private key (NEVER share!)
 ```
 
-### 3. Client Setup
-
+**Example for doctor_smith:**
 ```
 Client/
 ├── certs/
-│   ├── [name].p12     ← Client runs generate_[name].bat HERE
-│   └── server.cer     ← Copy from Server/certs/
-├── keys/
-│   ├── [role]_private.key  ← Their private key only
-│   ├── doctor_public.key   ← All public keys
-│   └── nurse_public.key
-└── index.html
+│   ├── doctor_smith.p12      ← Your mTLS cert
+│   └── server.cer            ← To verify server
+└── keys/
+    ├── doctor_private.key    ← YOUR decryption key (KEEP SECRET!)
+    ├── doctor_public.key     ← For encrypting to doctors
+    └── nurse_public.key      ← For encrypting to nurses
 ```
 
-**Give to each client:**
-- `generate_[name].bat` - they run it to make their .p12
-- `server.cer` - to verify server
-- `[role]_private.key` - their private key
-- All `*_public.key` files
+---
 
-## Folder Structure
+## Complete Folder Structure
 
 ```
 mysql-Zero-trust/
-├── Admin/          ← Admin tools (don't share)
-│   └── index.html
-├── Client/         ← Give to users
-│   ├── index.html
-│   ├── certs/
-│   └── keys/
-├── Server/         ← Your server
-│   ├── Server.java
+├── Admin/                    ← ADMIN ONLY (don't distribute)
+│   └── index.html           
+│
+├── Server/
+│   ├── certs/               ← Run server .bats HERE
+│   │   ├── server.p12       ← From generate_server.bat
+│   │   ├── server.cer       ← From export_server_public.bat
+│   │   └── truststore.p12   ← From add_[name]_to_server.bat
 │   ├── config.properties
-│   ├── certs/
-│   ├── lib/
+│   ├── Server.java
 │   └── sql/
-└── README.md
+│
+└── Client/                   ← Give to each user
+    ├── certs/               ← Run client .bats HERE
+    │   ├── [name].p12       ← From generate_[name].bat
+    │   └── server.cer       ← Copy from Server/certs/
+    ├── keys/
+    │   ├── [role]_private.key   ← THEIR private key only
+    │   ├── doctor_public.key    ← All public keys
+    │   └── nurse_public.key
+    └── index.html
 ```
 
-## mTLS Flow
+---
 
-```
-1. Server proves identity → server.cer → clients verify
-2. Client proves identity → [name].p12 → server checks truststore
-```
+## Quick Setup Checklist
 
-Only clients in `truststore.p12` can connect.
+### Admin Does:
+- [ ] Open `Admin/index.html`
+- [ ] RSA Keys tab → Generate for each role
+- [ ] Server Cert tab → Download & run `generate_server.bat` in `Server/certs/`
+- [ ] Server Cert tab → Download & run `export_server_public.bat` in `Server/certs/`
+- [ ] For each user: Client Certs tab → Download scripts
+- [ ] Users tab → Create users → Download `users.sql`
+- [ ] Database tab → Download `config.properties`
+- [ ] Run SQL scripts in database
+
+### Each Client Gets:
+- [ ] `generate_[name].bat` → Run in `Client/certs/`
+- [ ] `server.cer` → Place in `Client/certs/`
+- [ ] `[role]_private.key` → Place in `Client/keys/` (KEEP SECRET!)
+- [ ] All `*_public.key` files → Place in `Client/keys/`
+- [ ] `Client/index.html`
+
+### Client Returns to Admin:
+- [ ] `[name].cer` (exported from their .p12)
+
+### Admin Finishes:
+- [ ] Run `add_[name]_to_server.bat` in `Server/certs/` for each client
