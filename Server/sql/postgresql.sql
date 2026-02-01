@@ -9,6 +9,8 @@ CREATE TABLE patient_records (
     encrypted_diagnosis TEXT,
     encrypted_treatment TEXT,
     encrypted_prescription TEXT,
+    encrypted_media TEXT,
+    media_type VARCHAR(50),
     created_by_role VARCHAR(20),
     allowed_roles VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

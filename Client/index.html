@@ -64,6 +64,9 @@
 <label>Diagnosis</label><textarea id="pdiag"></textarea>
 <label>Treatment</label><textarea id="ptreat"></textarea>
 <label>Prescription</label><textarea id="ppres"></textarea>
+<label>Media (Image/Video) - Optional</label>
+<input type="file" id="pmedia" accept="image/*,video/*">
+<div id="mediapreview"></div>
 <label>Encrypt for Roles</label>
 <select id="proles" multiple style="height:60px"><option value="doctor" selected>Doctor</option><option value="nurse">Nurse</option></select>
 <br><br><button class="s" onclick="createRecord()">💾 Encrypt & Save</button>
@@ -207,7 +210,7 @@ async function viewRec(hid){
   try{
     const arr=await(await fetch(API+'/api/records?id='+hid)).json(),r=arr[0]||arr;curRec=r;
     const dec={};
-    for(const f of['encryptedName','encryptedDiagnosis','encryptedTreatment','encryptedPrescription']){
+    for(const f of['encryptedName','encryptedDiagnosis','encryptedTreatment','encryptedPrescription','encryptedMedia']){
       if(r[f])try{
         const p=JSON.parse(atob(r[f]));
         const keyData=p.keys[user.role]||p.keys[Object.keys(p.keys)[0]];
@@ -216,12 +219,19 @@ async function viewRec(hid){
       }catch{dec[f.replace('encrypted','')]='[Cannot decrypt]'}
     }
     const canE=canUpdate();
+    let mediaHtml='';
+    if(dec.Media && dec.Media!=='[Cannot decrypt]' && dec.Media!=='[No access for your role]'){
+      const mt=r.mediaType||'';
+      if(mt.startsWith('image'))mediaHtml=`<p><b>Media:</b><br><img src="${dec.Media}" style="max-width:100%;max-height:300px;border-radius:4px"></p>`;
+      else if(mt.startsWith('video'))mediaHtml=`<p><b>Media:</b><br><video src="${dec.Media}" controls style="max-width:100%"></video></p>`;
+    }
     document.getElementById('rd').innerHTML=`
       <p><b>Patient ID:</b> ${r.hashedPatientId.slice(0,20)}...</p>
       <p><b>Name:</b> ${dec.Name||'-'}</p>
       <p><b>Diagnosis:</b> ${dec.Diagnosis||'-'}</p>
       <p><b>Treatment:</b> ${dec.Treatment||'-'}</p>
       <p><b>Prescription:</b> ${dec.Prescription||'-'}</p>
+      ${mediaHtml}
       <p><b>Created by:</b> ${r.createdByRole}</p>
       <p><b>Allowed roles:</b> ${r.allowedRoles}</p>
       ${canE?'<br><button class="s" onclick="showEdit()">✏️ Edit</button>':'<p class="perm">Only doctors can edit</p>'}`;
@@ -277,18 +287,42 @@ async function createRecord(){
       for(const[role,pk]of Object.entries(pubKeys))if(roles.includes(role))keys[role]=await C.encKey(aes,pk);
       return btoa(JSON.stringify({data,iv,keys}));
     }
+    
+    // Handle media file
+    let encMedia=null,mediaType=null;
+    const mediaFile=document.getElementById('pmedia').files[0];
+    if(mediaFile){
+      mediaType=mediaFile.type;
+      const reader=new FileReader();
+      const b64=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(mediaFile)});
+      encMedia=await encField(b64);
+    }
+    
     const rec={
       hashedPatientId:await C.hash(document.getElementById('pid').value),
       encryptedName:await encField(document.getElementById('pname').value),
       encryptedDiagnosis:await encField(document.getElementById('pdiag').value),
       encryptedTreatment:await encField(document.getElementById('ptreat').value),
       encryptedPrescription:await encField(document.getElementById('ppres').value),
+      encryptedMedia:encMedia,
+      mediaType:mediaType,
       createdByRole:user.role,
       allowedRoles:roles.join(',')
     };
     const res=await fetch(API+'/api/records',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)});
-    if(res.ok){st.innerHTML='<div class="alert ok">✅ Saved!</div>';['pid','pname','pdiag','ptreat','ppres'].forEach(i=>document.getElementById(i).value='')}
+    if(res.ok){st.innerHTML='<div class="alert ok">✅ Saved!</div>';['pid','pname','pdiag','ptreat','ppres'].forEach(i=>document.getElementById(i).value='');document.getElementById('pmedia').value='';document.getElementById('mediapreview').innerHTML=''}
     else throw new Error(await res.text());
   }catch(e){st.innerHTML=`<div class="alert err">❌ ${e.message}</div>`}
 }
+
+// Media preview
+document.getElementById('pmedia').onchange=function(){
+  const f=this.files[0];if(!f)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    if(f.type.startsWith('image'))document.getElementById('mediapreview').innerHTML=`<img src="${e.target.result}" style="max-width:200px;max-height:150px;margin-top:8px;border-radius:4px">`;
+    else if(f.type.startsWith('video'))document.getElementById('mediapreview').innerHTML=`<video src="${e.target.result}" controls style="max-width:200px;margin-top:8px"></video>`;
+  };
+  reader.readAsDataURL(f);
+};
 </script></body></html>
