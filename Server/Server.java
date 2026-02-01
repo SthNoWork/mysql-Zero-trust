@@ -13,13 +13,14 @@ public class Server {
     static Properties cfg = new Properties();
     static HttpClient httpClient = HttpClient.newHttpClient();
     static String TABLE, SCHEMA;
-    static boolean isSupabase;
+    static boolean isSupabase, mtlsEnabled;
 
     public static void main(String[] args) throws Exception {
         cfg.load(new FileInputStream("config.properties"));
         TABLE = cfg.getProperty("db.table", "patient_records");
         SCHEMA = cfg.getProperty("db.schema", "public");
         isSupabase = "supabase".equals(cfg.getProperty("db.type"));
+        mtlsEnabled = "true".equals(cfg.getProperty("mtls.enabled", "false"));
         
         if (!isSupabase) connectDB();
         
@@ -34,6 +35,7 @@ public class Server {
         
         System.out.println("Server running on https://localhost:" + port);
         System.out.println("DB: " + (isSupabase ? "Supabase" : "MySQL"));
+        System.out.println("mTLS: " + (mtlsEnabled ? "ENABLED (client certs required)" : "DISABLED"));
     }
 
     static void connectDB() throws Exception {
@@ -47,38 +49,87 @@ public class Server {
 
     static HttpsServer setupSSL(int port) throws Exception {
         HttpsServer srv = HttpsServer.create(new InetSocketAddress(port), 0);
+        
+        // Server keystore (server identity)
         KeyStore ks = KeyStore.getInstance("PKCS12");
-        ks.load(new FileInputStream("certs/server.p12"), "password".toCharArray());
+        String ksPath = cfg.getProperty("mtls.keystore", "certs/server.p12");
+        String ksPwd = cfg.getProperty("mtls.password", "password");
+        ks.load(new FileInputStream(ksPath), ksPwd.toCharArray());
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-        kmf.init(ks, "password".toCharArray());
+        kmf.init(ks, ksPwd.toCharArray());
+        
+        TrustManager[] tms = null;
+        if (mtlsEnabled) {
+            // Truststore (trusted client certs)
+            KeyStore ts = KeyStore.getInstance("PKCS12");
+            String tsPath = cfg.getProperty("mtls.truststore", "certs/truststore.p12");
+            ts.load(new FileInputStream(tsPath), ksPwd.toCharArray());
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+            tmf.init(ts);
+            tms = tmf.getTrustManagers();
+        }
+        
         SSLContext ssl = SSLContext.getInstance("TLS");
-        ssl.init(kmf.getKeyManagers(), null, null);
-        srv.setHttpsConfigurator(new HttpsConfigurator(ssl));
+        ssl.init(kmf.getKeyManagers(), tms, null);
+        
+        srv.setHttpsConfigurator(new HttpsConfigurator(ssl) {
+            public void configure(HttpsParameters params) {
+                SSLContext c = getSSLContext();
+                SSLParameters sslp = c.getDefaultSSLParameters();
+                if (mtlsEnabled) {
+                    sslp.setNeedClientAuth(true); // Require client cert
+                }
+                params.setSSLParameters(sslp);
+            }
+        });
         return srv;
     }
 
     static void handleRecords(HttpExchange ex) throws IOException {
         cors(ex);
+        String method = ex.getRequestMethod();
+        String path = ex.getRequestURI().getPath();
         try {
-            if ("GET".equals(ex.getRequestMethod())) {
+            if ("GET".equals(method)) {
                 String q = ex.getRequestURI().getQuery();
-                String hid = q != null && q.contains("id=") ? q.split("id=")[1].split("&")[0] : null;
-                String json = isSupabase ? supabaseGet(hid) : mysqlGet(hid);
+                Map<String,String> params = parseQuery(q);
+                String json = isSupabase ? supabaseGet(params) : mysqlGet(params);
                 send(ex, 200, json);
-            } else if ("POST".equals(ex.getRequestMethod())) {
+            } else if ("POST".equals(method)) {
                 String body = new String(ex.getRequestBody().readAllBytes());
                 if (isSupabase) supabasePost(body); else mysqlPost(body);
                 send(ex, 201, "{\"ok\":true}");
-            } else if ("OPTIONS".equals(ex.getRequestMethod())) {
+            } else if ("PUT".equals(method)) {
+                // UPDATE - Doctor only (checked on client, but also here)
+                String hid = path.substring(path.lastIndexOf('/') + 1);
+                String body = new String(ex.getRequestBody().readAllBytes());
+                if (isSupabase) supabasePut(hid, body); else mysqlPut(hid, body);
+                send(ex, 200, "{\"ok\":true}");
+            } else if ("OPTIONS".equals(method)) {
                 ex.sendResponseHeaders(204, -1);
             }
         } catch (Exception e) { e.printStackTrace(); send(ex, 500, "{\"error\":\"" + e.getMessage() + "\"}"); }
     }
+    
+    static Map<String,String> parseQuery(String q) {
+        Map<String,String> m = new HashMap<>();
+        if (q != null) for (String p : q.split("&")) {
+            String[] kv = p.split("=");
+            if (kv.length == 2) m.put(kv[0], kv[1]);
+        }
+        return m;
+    }
 
-    static String mysqlGet(String hid) throws Exception {
-        String sql = "SELECT * FROM " + TABLE + (hid != null ? " WHERE hashed_patient_id=?" : "");
-        PreparedStatement ps = db.prepareStatement(sql);
-        if (hid != null) ps.setString(1, hid);
+    static String mysqlGet(Map<String,String> params) throws Exception {
+        StringBuilder sql = new StringBuilder("SELECT * FROM " + TABLE + " WHERE 1=1");
+        List<String> vals = new ArrayList<>();
+        
+        if (params.containsKey("id")) { sql.append(" AND hashed_patient_id=?"); vals.add(params.get("id")); }
+        if (params.containsKey("role")) { sql.append(" AND allowed_roles LIKE ?"); vals.add("%" + params.get("role") + "%"); }
+        if (params.containsKey("createdBy")) { sql.append(" AND created_by_role=?"); vals.add(params.get("createdBy")); }
+        
+        PreparedStatement ps = db.prepareStatement(sql.toString());
+        for (int i = 0; i < vals.size(); i++) ps.setString(i + 1, vals.get(i));
         ResultSet rs = ps.executeQuery();
         StringBuilder json = new StringBuilder("[");
         while (rs.next()) {
@@ -106,14 +157,28 @@ public class Server {
         ps.setString(7, d.getOrDefault("allowedRoles", "doctor,nurse"));
         ps.executeUpdate();
     }
+    
+    static void mysqlPut(String hid, String body) throws Exception {
+        Map<String,String> d = parseJson(body);
+        PreparedStatement ps = db.prepareStatement("UPDATE " + TABLE + " SET encrypted_name=?,encrypted_diagnosis=?,encrypted_treatment=?,encrypted_prescription=? WHERE hashed_patient_id=?");
+        ps.setString(1, d.get("encryptedName"));
+        ps.setString(2, d.get("encryptedDiagnosis"));
+        ps.setString(3, d.get("encryptedTreatment"));
+        ps.setString(4, d.get("encryptedPrescription"));
+        ps.setString(5, hid);
+        ps.executeUpdate();
+    }
 
-    static String supabaseGet(String hid) throws Exception {
-        String url = cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?select=*" + (hid != null ? "&hashed_patient_id=eq." + hid : "");
-        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url))
+    static String supabaseGet(Map<String,String> params) throws Exception {
+        StringBuilder url = new StringBuilder(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?select=*");
+        if (params.containsKey("id")) url.append("&hashed_patient_id=eq.").append(params.get("id"));
+        if (params.containsKey("role")) url.append("&allowed_roles=like.*").append(params.get("role")).append("*");
+        if (params.containsKey("createdBy")) url.append("&created_by_role=eq.").append(params.get("createdBy"));
+        
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url.toString()))
             .header("apikey", cfg.getProperty("supabase.key"))
             .header("Authorization", "Bearer " + cfg.getProperty("supabase.key")).GET().build();
         String resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString()).body();
-        // Convert Supabase JSON to our format
         return resp.replace("hashed_patient_id", "hashedPatientId")
                    .replace("encrypted_name", "encryptedName")
                    .replace("encrypted_diagnosis", "encryptedDiagnosis")
@@ -132,6 +197,19 @@ public class Server {
             .header("Authorization", "Bearer " + cfg.getProperty("supabase.key"))
             .header("Content-Type", "application/json")
             .header("Prefer", "return=minimal").POST(HttpRequest.BodyPublishers.ofString(json)).build();
+        httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+    
+    static void supabasePut(String hid, String body) throws Exception {
+        Map<String,String> d = parseJson(body);
+        String json = String.format("{\"encrypted_name\":\"%s\",\"encrypted_diagnosis\":\"%s\",\"encrypted_treatment\":\"%s\",\"encrypted_prescription\":\"%s\"}",
+            esc(d.get("encryptedName")), esc(d.get("encryptedDiagnosis")), esc(d.get("encryptedTreatment")), esc(d.get("encryptedPrescription")));
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?hashed_patient_id=eq." + hid))
+            .header("apikey", cfg.getProperty("supabase.key"))
+            .header("Authorization", "Bearer " + cfg.getProperty("supabase.key"))
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=minimal")
+            .method("PATCH", HttpRequest.BodyPublishers.ofString(json)).build();
         httpClient.send(req, HttpResponse.BodyHandlers.ofString());
     }
 
@@ -164,7 +242,7 @@ public class Server {
         ex.close();
     }
 
-    static void cors(HttpExchange ex) { ex.getResponseHeaders().add("Access-Control-Allow-Origin", "*"); ex.getResponseHeaders().add("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); ex.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type"); }
+    static void cors(HttpExchange ex) { ex.getResponseHeaders().add("Access-Control-Allow-Origin", "*"); ex.getResponseHeaders().add("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS"); ex.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type"); }
     static void send(HttpExchange ex, int code, String body) throws IOException { byte[] b = body.getBytes(); ex.getResponseHeaders().set("Content-Type", "application/json"); ex.sendResponseHeaders(code, b.length); ex.getResponseBody().write(b); ex.close(); }
     static String esc(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\""); }
     static Map<String,String> parseJson(String j) { Map<String,String> m = new HashMap<>(); for (String p : j.replaceAll("[{}\"]", "").split(",")) { String[] kv = p.split(":"); if (kv.length == 2) m.put(kv[0].trim(), kv[1].trim()); } return m; }

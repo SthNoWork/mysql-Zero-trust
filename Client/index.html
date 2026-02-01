@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>E2EE Hospital</title>
+<style>*{box-sizing:border-box;font-family:system-ui}body{background:#1a1a2e;color:#eee;margin:0;min-height:100vh}.hdr{background:#0f3460;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}.hdr h1{margin:0;font-size:18px}.usr{display:flex;align-items:center;gap:10px}.badge{background:#0f8;color:#000;padding:4px 10px;border-radius:12px;font-size:12px}.cnt{max-width:900px;margin:15px auto;padding:0 15px}.card{background:#16213e;border-radius:8px;padding:15px;margin:15px 0}h2{color:#0af;margin-top:0}h3{color:#0cf;margin:10px 0 5px;font-size:14px}label{display:block;margin:8px 0 4px;color:#aaa;font-size:13px}input,textarea,select{width:100%;padding:10px;border:1px solid #0f3460;border-radius:4px;background:#0a0a15;color:#fff}textarea{min-height:60px}button{padding:10px 18px;border:none;border-radius:4px;cursor:pointer;margin:3px}.p{background:#0af;color:#000}.s{background:#0f8;color:#000}.w{background:#f80;color:#000}.d{background:#f44;color:#fff}.r{display:flex;gap:10px}.r>*{flex:1}.list{max-height:350px;overflow-y:auto}.item{background:#0f3460;padding:12px;border-radius:4px;margin:8px 0;cursor:pointer}.item:hover{background:#1a4a7a}.item h3{margin:0 0 4px;color:#0af;font-size:14px}.item small{color:#888}.modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.8);z-index:100;align-items:center;justify-content:center}.modal.on{display:flex}.mc{background:#16213e;padding:25px;border-radius:8px;max-width:550px;width:90%;max-height:90vh;overflow-y:auto}.x{float:right;font-size:20px;cursor:pointer;color:#888}.tabs{display:flex;gap:4px;flex-wrap:wrap}.tab{padding:8px 15px;background:#0f3460;border-radius:4px 4px 0 0;cursor:pointer}.tab.a{background:#16213e;color:#0af}.h{display:none}.alert{padding:12px;border-radius:4px;margin:8px 0}.ok{background:#0f83;border:1px solid #0f8}.err{background:#f443;border:1px solid #f44}.info{background:#0af3;border:1px solid #0af}#kf,#pkf{display:none}.perm{font-size:11px;color:#888;margin-top:5px}</style></head>
+<body>
+
+<!-- LOGIN MODAL -->
+<div id="lm" class="modal on"><div class="mc">
+<h2>🔐 Login</h2>
+<label>Username</label><input id="lu">
+<label>Password</label><input type="password" id="lp">
+<br><br><button class="s" onclick="login()">Login</button>
+<div id="lerr"></div>
+</div></div>
+
+<!-- KEY MODAL -->
+<div id="km" class="modal"><div class="mc">
+<h2>🔑 Load Private Key</h2>
+<p>Required for decryption. Never leaves your device.</p>
+<div class="alert info">Get your key file from the administrator.</div>
+<label>Private Key (.key)</label><input type="file" id="ikf" accept=".key,.pem" onchange="loadKey(this);closeKM()">
+<br><button class="s" onclick="document.getElementById('ikf').click()">📂 Browse</button>
+</div></div>
+
+<div class="hdr">
+<h1>🏥 E2EE Hospital</h1>
+<div class="usr">
+<span id="uinfo"></span>
+<button class="p" onclick="document.getElementById('kf').click()">🔑 Key</button>
+<input type="file" id="kf" accept=".key,.pem" onchange="loadKey(this)">
+<button class="w" onclick="logout()">Logout</button>
+</div>
+</div>
+
+<div class="cnt">
+<div class="tabs">
+<div class="tab a" onclick="tab(event,'view')">📋 Records</div>
+<div class="tab" onclick="tab(event,'add')">➕ Add</div>
+<div class="tab" onclick="tab(event,'cfg')">⚙️ Config</div>
+</div>
+
+<!-- RECORDS -->
+<div id="view" class="card">
+<h2>📋 Patient Records</h2>
+<h3>🔍 Search / Filter</h3>
+<div class="r">
+<div><label>Patient ID</label><input id="sid" placeholder="Exact ID"></div>
+<div><label>Role Filter</label><select id="srf"><option value="">All</option><option value="doctor">Doctor only</option><option value="nurse">Nurse only</option></select></div>
+</div>
+<div class="r">
+<div><label>Created By</label><select id="scb"><option value="">Anyone</option><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select></div>
+<div><label>Date From</label><input type="date" id="sdf"></div>
+</div>
+<br>
+<button class="p" onclick="search()">🔍 Search</button>
+<button class="s" onclick="loadAll()">📥 Load All</button>
+<div id="rlist" class="list"></div>
+</div>
+
+<!-- ADD RECORD -->
+<div id="add" class="card h">
+<h2>➕ New Record</h2>
+<p class="perm" id="addperm"></p>
+<div class="r"><div><label>Patient ID</label><input id="pid"></div><div><label>Name</label><input id="pname"></div></div>
+<label>Diagnosis</label><textarea id="pdiag"></textarea>
+<label>Treatment</label><textarea id="ptreat"></textarea>
+<label>Prescription</label><textarea id="ppres"></textarea>
+<label>Encrypt for Roles</label>
+<select id="proles" multiple style="height:60px"><option value="doctor" selected>Doctor</option><option value="nurse">Nurse</option></select>
+<br><br><button class="s" onclick="createRecord()">💾 Encrypt & Save</button>
+<div id="cstat"></div>
+</div>
+
+<!-- CONFIG -->
+<div id="cfg" class="card h">
+<h2>⚙️ Configuration</h2>
+<label>Server URL</label><input id="surl" value="https://localhost:8000">
+<br><br>
+<label>Load Public Keys (for encrypting to roles)</label>
+<input type="file" id="pkf" accept=".key,.pem" multiple>
+<button class="p" onclick="document.getElementById('pkf').click()">📂 Select Public Keys</button>
+<div id="pkstat"></div>
+<h3>📜 mTLS Certificate (optional)</h3>
+<p class="perm">For mTLS: load your .p12 client certificate</p>
+<input type="file" id="certf" accept=".p12,.pfx">
+<button class="p" onclick="document.getElementById('certf').click()">📂 Client Cert</button>
+</div>
+
+<!-- VIEW/EDIT MODAL -->
+<div id="rm" class="modal"><div class="mc" style="max-width:600px">
+<span class="x" onclick="closeRM()">×</span>
+<h2>📄 Patient Record</h2>
+<div id="rd"></div>
+<div id="editform" class="h">
+<h3>✏️ Edit Record</h3>
+<label>Name</label><input id="ename">
+<label>Diagnosis</label><textarea id="ediag"></textarea>
+<label>Treatment</label><textarea id="etreat"></textarea>
+<label>Prescription</label><textarea id="epres"></textarea>
+<br><button class="s" onclick="saveEdit()">💾 Save Changes</button>
+<div id="estat"></div>
+</div>
+</div></div>
+</div>
+
+<script>
+const C={
+  async genAES(){return crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
+  async enc(txt,key){const iv=crypto.getRandomValues(new Uint8Array(12)),e=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(txt));return{data:this.toB64(e),iv:this.toB64(iv)}},
+  async dec(data,iv,key){return new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:this.fromB64(iv)},key,this.fromB64(data)))},
+  async encKey(aes,rsa){const r=await crypto.subtle.exportKey('raw',aes);return this.toB64(await crypto.subtle.encrypt({name:'RSA-OAEP'},rsa,r))},
+  async decKey(enc,rsa){const r=await crypto.subtle.decrypt({name:'RSA-OAEP'},rsa,this.fromB64(enc));return crypto.subtle.importKey('raw',r,{name:'AES-GCM',length:256},true,['encrypt','decrypt'])},
+  async impPub(pem){return crypto.subtle.importKey('spki',this.pemToBin(pem,'PUBLIC KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['encrypt'])},
+  async impPriv(pem){return crypto.subtle.importKey('pkcs8',this.pemToBin(pem,'PRIVATE KEY'),{name:'RSA-OAEP',hash:'SHA-256'},true,['decrypt'])},
+  async hash(s){const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('')},
+  toB64(b){let s='';const a=new Uint8Array(b);for(let i=0;i<a.length;i++)s+=String.fromCharCode(a[i]);return btoa(s)},
+  fromB64(s){const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a.buffer},
+  pemToBin(p,t){return this.fromB64(p.replace(`-----BEGIN ${t}-----`,'').replace(`-----END ${t}-----`,'').replace(/\s/g,''))}
+};
+
+let user=null,privKey=null,pubKeys={},API='https://localhost:8000',curRec=null;
+
+// PERMISSIONS: Doctor=CRU, Nurse=CR
+const canCreate=()=>user&&(user.role==='doctor'||user.role==='nurse');
+const canRead=()=>user&&(user.role==='doctor'||user.role==='nurse');
+const canUpdate=()=>user&&user.role==='doctor';
+
+document.getElementById('pkf').onchange=async function(){
+  for(const f of this.files){
+    const name=f.name.replace('_public.key','').replace('.key','');
+    try{pubKeys[name]=await C.impPub(await f.text())}catch(e){console.error(e)}
+  }
+  document.getElementById('pkstat').innerHTML=`<div class="alert ok">Loaded: ${Object.keys(pubKeys).join(', ')}</div>`;
+};
+
+function tab(e,id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('a'));document.querySelectorAll('.card').forEach(c=>c.classList.add('h'));e.target.classList.add('a');document.getElementById(id).classList.remove('h')}
+function closeKM(){document.getElementById('km').classList.remove('on')}
+function closeRM(){document.getElementById('rm').classList.remove('on')}
+
+async function login(){
+  const u=document.getElementById('lu').value,p=document.getElementById('lp').value;
+  if(!u||!p){document.getElementById('lerr').innerHTML='<div class="alert err">Fill all fields</div>';return}
+  API=document.getElementById('surl').value;
+  try{
+    const ph=await C.hash(p);
+    const res=await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,passwordHash:ph})});
+    const d=await res.json();
+    if(d.ok){
+      user={username:u,role:d.role};
+      document.getElementById('lm').classList.remove('on');
+      document.getElementById('km').classList.add('on');
+      updateUI();
+    }else{
+      document.getElementById('lerr').innerHTML='<div class="alert err">Invalid credentials</div>';
+    }
+  }catch(e){document.getElementById('lerr').innerHTML=`<div class="alert err">${e.message}</div>`}
+}
+
+function logout(){user=null;privKey=null;document.getElementById('lm').classList.add('on');document.getElementById('rlist').innerHTML=''}
+
+function updateUI(){
+  document.getElementById('uinfo').innerHTML=`<span class="badge">${user.role.toUpperCase()}</span> ${user.username}`;
+  document.getElementById('addperm').textContent=canCreate()?'✓ You can create records':`✗ ${user.role} cannot create records`;
+}
+
+async function loadKey(inp){
+  try{
+    privKey=await C.impPriv(await inp.files[0].text());
+    closeKM();loadAll();
+  }catch(e){alert('Bad key: '+e.message)}
+}
+
+async function loadAll(){
+  if(!privKey){alert('Load key first');return}
+  if(!canRead()){alert('No read permission');return}
+  API=document.getElementById('surl').value;
+  try{
+    const res=await fetch(API+'/api/records');
+    if(!res.ok)throw new Error('Server error: '+res.status);
+    const r=await res.json();
+    showRecords(r);
+  }catch(e){document.getElementById('rlist').innerHTML=`<div class="alert err">${e.message}</div>`}
+}
+
+async function search(){
+  if(!privKey){alert('Load key first');return}
+  API=document.getElementById('surl').value;
+  const id=document.getElementById('sid').value;
+  const rf=document.getElementById('srf').value;
+  const cb=document.getElementById('scb').value;
+  try{
+    let url=API+'/api/records?';
+    if(id)url+='id='+await C.hash(id)+'&';
+    if(rf)url+='role='+rf+'&';
+    if(cb)url+='createdBy='+cb+'&';
+    const r=await(await fetch(url)).json();
+    showRecords(r);
+  }catch(e){document.getElementById('rlist').innerHTML=`<div class="alert err">${e.message}</div>`}
+}
+
+function showRecords(arr){
+  if(!arr||!arr.length){document.getElementById('rlist').innerHTML='<div class="alert info">No records</div>';return}
+  document.getElementById('rlist').innerHTML=arr.map(r=>`<div class="item" onclick="viewRec('${r.hashedPatientId}')"><h3>Patient: ${(r.hashedPatientId||'').slice(0,12)}...</h3><small>Created by: ${r.createdByRole||'?'} | Roles: ${r.allowedRoles||'?'}</small></div>`).join('');
+}
+
+async function viewRec(hid){
+  if(!privKey){alert('Load key first');return}
+  try{
+    const arr=await(await fetch(API+'/api/records?id='+hid)).json(),r=arr[0]||arr;curRec=r;
+    const dec={};
+    for(const f of['encryptedName','encryptedDiagnosis','encryptedTreatment','encryptedPrescription']){
+      if(r[f])try{
+        const p=JSON.parse(atob(r[f]));
+        const keyData=p.keys[user.role]||p.keys[Object.keys(p.keys)[0]];
+        if(keyData){const k=await C.decKey(keyData,privKey);dec[f.replace('encrypted','')]=await C.dec(p.data,p.iv,k)}
+        else dec[f.replace('encrypted','')]='[No access for your role]';
+      }catch{dec[f.replace('encrypted','')]='[Cannot decrypt]'}
+    }
+    const canE=canUpdate();
+    document.getElementById('rd').innerHTML=`
+      <p><b>Patient ID:</b> ${r.hashedPatientId.slice(0,20)}...</p>
+      <p><b>Name:</b> ${dec.Name||'-'}</p>
+      <p><b>Diagnosis:</b> ${dec.Diagnosis||'-'}</p>
+      <p><b>Treatment:</b> ${dec.Treatment||'-'}</p>
+      <p><b>Prescription:</b> ${dec.Prescription||'-'}</p>
+      <p><b>Created by:</b> ${r.createdByRole}</p>
+      <p><b>Allowed roles:</b> ${r.allowedRoles}</p>
+      ${canE?'<br><button class="s" onclick="showEdit()">✏️ Edit</button>':'<p class="perm">Only doctors can edit</p>'}`;
+    document.getElementById('editform').classList.add('h');
+    document.getElementById('ename').value=dec.Name||'';
+    document.getElementById('ediag').value=dec.Diagnosis||'';
+    document.getElementById('etreat').value=dec.Treatment||'';
+    document.getElementById('epres').value=dec.Prescription||'';
+    document.getElementById('rm').classList.add('on');
+  }catch(e){alert('Error: '+e.message)}
+}
+
+function showEdit(){
+  if(!canUpdate()){alert('Only doctors can update');return}
+  document.getElementById('editform').classList.remove('h');
+}
+
+async function saveEdit(){
+  if(!canUpdate()){alert('No permission');return}
+  const st=document.getElementById('estat');st.innerHTML='<div class="alert info">Encrypting...</div>';
+  try{
+    const roles=curRec.allowedRoles.split(',');
+    async function encField(txt){
+      const aes=await C.genAES(),{data,iv}=await C.enc(txt,aes),keys={};
+      for(const[role,pk]of Object.entries(pubKeys))if(roles.includes(role))keys[role]=await C.encKey(aes,pk);
+      return btoa(JSON.stringify({data,iv,keys}));
+    }
+    const rec={
+      hashedPatientId:curRec.hashedPatientId,
+      encryptedName:await encField(document.getElementById('ename').value),
+      encryptedDiagnosis:await encField(document.getElementById('ediag').value),
+      encryptedTreatment:await encField(document.getElementById('etreat').value),
+      encryptedPrescription:await encField(document.getElementById('epres').value),
+      createdByRole:curRec.createdByRole,
+      allowedRoles:curRec.allowedRoles
+    };
+    const res=await fetch(API+'/api/records/'+curRec.hashedPatientId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)});
+    if(res.ok){st.innerHTML='<div class="alert ok">✅ Updated!</div>';setTimeout(()=>closeRM(),1000)}
+    else throw new Error(await res.text());
+  }catch(e){st.innerHTML=`<div class="alert err">❌ ${e.message}</div>`}
+}
+
+async function createRecord(){
+  if(!canCreate()){alert('No permission');return}
+  if(!privKey){alert('Load key first');return}
+  if(!Object.keys(pubKeys).length){alert('Load public keys in Config tab first');return}
+  const st=document.getElementById('cstat');st.innerHTML='<div class="alert info">Encrypting...</div>';
+  API=document.getElementById('surl').value;
+  try{
+    const roles=[...document.getElementById('proles').selectedOptions].map(o=>o.value);
+    async function encField(txt){
+      const aes=await C.genAES(),{data,iv}=await C.enc(txt,aes),keys={};
+      for(const[role,pk]of Object.entries(pubKeys))if(roles.includes(role))keys[role]=await C.encKey(aes,pk);
+      return btoa(JSON.stringify({data,iv,keys}));
+    }
+    const rec={
+      hashedPatientId:await C.hash(document.getElementById('pid').value),
+      encryptedName:await encField(document.getElementById('pname').value),
+      encryptedDiagnosis:await encField(document.getElementById('pdiag').value),
+      encryptedTreatment:await encField(document.getElementById('ptreat').value),
+      encryptedPrescription:await encField(document.getElementById('ppres').value),
+      createdByRole:user.role,
+      allowedRoles:roles.join(',')
+    };
+    const res=await fetch(API+'/api/records',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rec)});
+    if(res.ok){st.innerHTML='<div class="alert ok">✅ Saved!</div>';['pid','pname','pdiag','ptreat','ppres'].forEach(i=>document.getElementById(i).value='')}
+    else throw new Error(await res.text());
+  }catch(e){st.innerHTML=`<div class="alert err">❌ ${e.message}</div>`}
+}
+</script></body></html>
