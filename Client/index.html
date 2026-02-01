@@ -146,6 +146,7 @@ async function login(){
   try{
     const ph=await C.hash(p);
     const res=await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,passwordHash:ph})});
+    if(!res.ok)throw new Error('Server returned '+res.status);
     const d=await res.json();
     if(d.ok){
       user={username:u,role:d.role};
@@ -155,7 +156,11 @@ async function login(){
     }else{
       document.getElementById('lerr').innerHTML='<div class="alert err">Invalid credentials</div>';
     }
-  }catch(e){document.getElementById('lerr').innerHTML=`<div class="alert err">${e.message}</div>`}
+  }catch(e){
+    let msg=e.message;
+    if(msg.includes('Failed to fetch'))msg='Cannot reach server. Is it running? Visit https://localhost:8000 to accept cert.';
+    document.getElementById('lerr').innerHTML=`<div class="alert err">${msg}</div>`;
+  }
 }
 
 function logout(){user=null;privKey=null;document.getElementById('lm').classList.add('on');document.getElementById('rlist').innerHTML=''}
