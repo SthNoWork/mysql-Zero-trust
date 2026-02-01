@@ -49,6 +49,12 @@ echo.
 echo STEP 4: Generate Client Certificates
 echo ====================================
 if exist "Client\certs\generate_doctor_bob.bat" (
+    REM Delete existing keystore to regenerate
+    if exist "Client\certs\doctor_bob.p12" (
+        echo Deleting existing doctor_bob.p12...
+        del "Client\certs\doctor_bob.p12"
+    )
+    
     echo Running: Client\certs\generate_doctor_bob.bat
     cd Client\certs
     call generate_doctor_bob.bat
@@ -57,8 +63,15 @@ if exist "Client\certs\generate_doctor_bob.bat" (
     echo.
     echo NOTE: Client should now have doctor_bob.p12 in Client\certs\
     echo.
-    echo IMPORTANT: Client must export doctor_bob.cer and send to admin:
-    echo   keytool -exportcert -alias doctor_bob -keystore doctor_bob.p12 -file doctor_bob.cer
+    echo Exporting doctor_bob.cer for server truststore...
+    cd Client\certs
+    keytool -exportcert -alias doctor_bob -keystore doctor_bob.p12 -storepass clientpass -file doctor_bob.cer
+    cd ..\..\
+    
+    if exist "Client\certs\doctor_bob.cer" (
+        copy "Client\certs\doctor_bob.cer" "Server\certs\doctor_bob.cer"
+        echo ✓ doctor_bob.cer copied to Server\certs\
+    )
     pause
 ) else (
     echo SKIP: No client .bat file found (generate_[name].bat)
@@ -70,11 +83,22 @@ echo.
 echo STEP 5: Add Client Certificate to Server Truststore
 echo =====================================================
 if exist "Server\certs\add_doctor_bob_to_server.bat" (
-    echo Place doctor_bob.cer in Server\certs\ first, then:
-    cd Server\certs
-    call add_doctor_bob_to_server.bat
-    cd ..\..\
-    echo ✓ Client certificate added to truststore
+    if exist "Server\certs\doctor_bob.cer" (
+        cd Server\certs
+        REM Delete existing truststore to start fresh
+        if exist "truststore.p12" (
+            echo Resetting truststore.p12...
+            del "truststore.p12"
+        )
+        call add_doctor_bob_to_server.bat
+        cd ..\..\
+        if exist "Server\certs\truststore.p12" (
+            echo ✓ Client certificate added to truststore
+        )
+    ) else (
+        echo ERROR: doctor_bob.cer not found in Server\certs\
+        echo Run STEP 4 again to export the certificate
+    )
 ) else (
     echo SKIP: No add_[name]_to_server.bat file found
     echo       Admin should create via Admin\index.html
