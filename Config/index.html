@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>E2EE Config</title>
+<style>*{box-sizing:border-box;font-family:system-ui}body{background:#1a1a2e;color:#eee;margin:0;padding:20px}.c{max-width:700px;margin:0 auto}.card{background:#16213e;border-radius:8px;padding:20px;margin:15px 0}h1{text-align:center;color:#0af}h2{color:#0af;margin-top:0}label{display:block;margin:8px 0 4px;color:#aaa}input,select{width:100%;padding:10px;border:1px solid #0f3460;border-radius:4px;background:#0a0a15;color:#fff}button{padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px}.p{background:#0af;color:#000}.s{background:#0f8;color:#000}.tabs{display:flex;gap:5px}.tab{padding:10px 15px;background:#0f3460;border-radius:4px 4px 0 0;cursor:pointer}.tab.a{background:#16213e;color:#0af}.out{background:#0a0a15;padding:10px;border-radius:4px;font-family:monospace;white-space:pre-wrap;margin:10px 0}.r{display:flex;gap:10px}.r>*{flex:1}.h{display:none}</style></head>
+<body><div class="c"><h1>🔧 E2EE Config Tool</h1>
+<div class="tabs"><div class="tab a" onclick="tab('db')">Database</div><div class="tab" onclick="tab('keys')">Keys</div><div class="tab" onclick="tab('certs')">Certs</div></div>
+
+<div id="db" class="card">
+<h2>📦 Database</h2>
+<div class="r"><div><label>Type</label><select id="dbt" onchange="document.getElementById('dbp').value=this.value=='mysql'?'3306':'5432'"><option value="mysql">MySQL</option><option value="postgresql">PostgreSQL</option></select></div><div><label>Port</label><input id="dbp" value="3306"></div></div>
+<div class="r"><div><label>Host</label><input id="dbh" value="localhost"></div><div><label>Database</label><input id="dbn" value="hospital"></div></div>
+<div class="r"><div><label>User</label><input id="dbu" value="root"></div><div><label>Password</label><input type="password" id="dbpw"></div></div>
+<label>Server Port</label><input id="sp" value="8000">
+<br><br><button class="s" onclick="dlConfig()">📥 Download config.properties</button>
+</div>
+
+<div id="keys" class="card h">
+<h2>🔑 RSA Keys</h2>
+<p>Generate key pairs. Public keys go to Client/keys/. Private key stays with owner.</p>
+<label>For Role</label><select id="kr"><option value="doctor">Doctor</option><option value="nurse">Nurse</option></select>
+<br><br><button class="s" onclick="genKeys()">⚡ Generate</button>
+<div id="ko" class="h"><div class="out" id="kout"></div><button class="p" onclick="dlPub()">📥 Public Key</button><button class="s" onclick="dlPriv()">📥 Private Key</button></div>
+</div>
+
+<div id="certs" class="card h">
+<h2>📜 Server Certificate</h2>
+<p>Run this command to create server.p12:</p>
+<div class="r"><div><label>CN (hostname)</label><input id="cn" value="localhost"></div><div><label>Password</label><input id="cp" value="password"></div></div>
+<br><button class="p" onclick="genCert()">Generate Command</button>
+<div id="certout" class="out h"></div>
+</div>
+</div>
+
+<script>
+let keys={pub:'',priv:''};
+function tab(id){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('a'));document.querySelectorAll('.card').forEach(c=>c.classList.add('h'));event.target.classList.add('a');document.getElementById(id).classList.remove('h')}
+function dl(name,content){const a=document.createElement('a');a.href='data:text/plain;charset=utf-8,'+encodeURIComponent(content);a.download=name;a.click()}
+function dlConfig(){dl('config.properties',`port=${document.getElementById('sp').value}\ndb.type=${document.getElementById('dbt').value}\ndb.host=${document.getElementById('dbh').value}\ndb.port=${document.getElementById('dbp').value}\ndb.name=${document.getElementById('dbn').value}\ndb.user=${document.getElementById('dbu').value}\ndb.pass=${document.getElementById('dbpw').value}`)}
+async function genKeys(){
+  const kp=await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);
+  const pub=await crypto.subtle.exportKey('spki',kp.publicKey);
+  const priv=await crypto.subtle.exportKey('pkcs8',kp.privateKey);
+  keys.pub=toPem(pub,'PUBLIC KEY');keys.priv=toPem(priv,'PRIVATE KEY');
+  document.getElementById('kout').textContent=`${document.getElementById('kr').value} keys generated!\n\nPublic: ${keys.pub.substring(0,80)}...\nPrivate: [hidden]`;
+  document.getElementById('ko').classList.remove('h');
+}
+function toPem(buf,type){const b64=btoa(String.fromCharCode(...new Uint8Array(buf)));return`-----BEGIN ${type}-----\n${b64.match(/.{1,64}/g).join('\n')}\n-----END ${type}-----`}
+function dlPub(){dl(document.getElementById('kr').value+'_public.key',keys.pub)}
+function dlPriv(){dl(document.getElementById('kr').value+'_private.key',keys.priv)}
+function genCert(){document.getElementById('certout').classList.remove('h');document.getElementById('certout').textContent=`keytool -genkeypair -alias server -keyalg RSA -keysize 2048 -storetype PKCS12 -keystore server.p12 -validity 3650 -storepass ${document.getElementById('cp').value} -dname "CN=${document.getElementById('cn').value}"\n\nPlace server.p12 in Server/certs/`}
+</script></body></html>
