@@ -3,25 +3,43 @@ package model;
 import java.sql.Date;
 import java.sql.Timestamp;
 
+/**
+ * Patient record with RBAC metadata for E2EE architecture.
+ * All medical data is stored encrypted - server NEVER decrypts.
+ */
 public class PatientRecord {
+    // ========== IDENTITY ==========
     private int recordIndex;
-    private String patientId; // Plaintext ID for input
-    private String patientIdHash;
-    private String patientName;
-    private Date patientDob;
-    private String doctorName;
-    private String nurseName;
-    private Timestamp checkInDate;
+    private String patientIdHash;       // SHA-256 hash of patient ID
     
-    // Encrypted Data
-    private byte[] encryptedSymptoms;
-    private byte[] encryptedDiagnosis;
-    private byte[] encryptedImages;
-    private byte[] encryptedVideos;
-    private byte[] doctorEncryptedAesKey;
-    private byte[] nurseEncryptedAesKey;
+    // ========== METADATA (Plaintext - for RBAC) ==========
+    private String patientName;         // Can be searched
+    private Date patientDob;            // Can be searched
+    private Timestamp checkInDate;
+    private String doctorName;          // Assigned doctor
+    private String nurseName;           // Assigned nurse
+    private String createdBy;           // User ID who created this record
+    private String createdByRole;       // Role of creator (doctor/nurse/admin)
+    
+    // ========== RBAC METADATA ==========
+    private String allowedRoles;        // Comma-separated: "doctor,nurse"
+    private String recipientIds;        // Comma-separated user IDs who can decrypt
 
-    // Getters and Setters
+    // ========== ENCRYPTED DATA (Ciphertext - E2EE) ==========
+    private String encryptedSymptoms;       // Base64 encoded AES-GCM ciphertext
+    private String encryptedDiagnosis;      // Base64 encoded AES-GCM ciphertext
+    private String encryptedImages;         // Base64 encoded AES-GCM ciphertext
+    private String encryptedVideos;         // Base64 encoded AES-GCM ciphertext
+    
+    // ========== ENCRYPTED AES KEYS (Per Recipient) ==========
+    private String doctorEncryptedAesKey;   // Base64 RSA-encrypted AES key for doctor
+    private String nurseEncryptedAesKey;    // Base64 RSA-encrypted AES key for nurse
+
+    // ========== Transient field for client input ==========
+    private transient String patientId;     // Raw ID (never stored, only hashed)
+
+    // ========== GETTERS AND SETTERS ==========
+    
     public int getRecordIndex() { return recordIndex; }
     public void setRecordIndex(int recordIndex) { this.recordIndex = recordIndex; }
 
@@ -46,21 +64,35 @@ public class PatientRecord {
     public Timestamp getCheckInDate() { return checkInDate; }
     public void setCheckInDate(Timestamp checkInDate) { this.checkInDate = checkInDate; }
 
-    public byte[] getEncryptedSymptoms() { return encryptedSymptoms; }
-    public void setEncryptedSymptoms(byte[] encryptedSymptoms) { this.encryptedSymptoms = encryptedSymptoms; }
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
 
-    public byte[] getEncryptedDiagnosis() { return encryptedDiagnosis; }
-    public void setEncryptedDiagnosis(byte[] encryptedDiagnosis) { this.encryptedDiagnosis = encryptedDiagnosis; }
+    public String getCreatedByRole() { return createdByRole; }
+    public void setCreatedByRole(String createdByRole) { this.createdByRole = createdByRole; }
 
-    public byte[] getEncryptedImages() { return encryptedImages; }
-    public void setEncryptedImages(byte[] encryptedImages) { this.encryptedImages = encryptedImages; }
+    public String getAllowedRoles() { return allowedRoles; }
+    public void setAllowedRoles(String allowedRoles) { this.allowedRoles = allowedRoles; }
 
-    public byte[] getEncryptedVideos() { return encryptedVideos; }
-    public void setEncryptedVideos(byte[] encryptedVideos) { this.encryptedVideos = encryptedVideos; }
+    public String getRecipientIds() { return recipientIds; }
+    public void setRecipientIds(String recipientIds) { this.recipientIds = recipientIds; }
 
-    public byte[] getDoctorEncryptedAesKey() { return doctorEncryptedAesKey; }
-    public void setDoctorEncryptedAesKey(byte[] doctorEncryptedAesKey) { this.doctorEncryptedAesKey = doctorEncryptedAesKey; }
+    // ========== ENCRYPTED FIELDS (Base64 Strings) ==========
+    
+    public String getEncryptedSymptoms() { return encryptedSymptoms; }
+    public void setEncryptedSymptoms(String encryptedSymptoms) { this.encryptedSymptoms = encryptedSymptoms; }
 
-    public byte[] getNurseEncryptedAesKey() { return nurseEncryptedAesKey; }
-    public void setNurseEncryptedAesKey(byte[] nurseEncryptedAesKey) { this.nurseEncryptedAesKey = nurseEncryptedAesKey; }
+    public String getEncryptedDiagnosis() { return encryptedDiagnosis; }
+    public void setEncryptedDiagnosis(String encryptedDiagnosis) { this.encryptedDiagnosis = encryptedDiagnosis; }
+
+    public String getEncryptedImages() { return encryptedImages; }
+    public void setEncryptedImages(String encryptedImages) { this.encryptedImages = encryptedImages; }
+
+    public String getEncryptedVideos() { return encryptedVideos; }
+    public void setEncryptedVideos(String encryptedVideos) { this.encryptedVideos = encryptedVideos; }
+
+    public String getDoctorEncryptedAesKey() { return doctorEncryptedAesKey; }
+    public void setDoctorEncryptedAesKey(String doctorEncryptedAesKey) { this.doctorEncryptedAesKey = doctorEncryptedAesKey; }
+
+    public String getNurseEncryptedAesKey() { return nurseEncryptedAesKey; }
+    public void setNurseEncryptedAesKey(String nurseEncryptedAesKey) { this.nurseEncryptedAesKey = nurseEncryptedAesKey; }
 }

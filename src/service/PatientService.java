@@ -8,6 +8,12 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * @deprecated Server-side encryption is removed in E2EE architecture.
+ * All encryption/decryption now happens CLIENT-SIDE only.
+ * Kept for backwards compatibility with console app (Main.java).
+ */
+@Deprecated
 public class PatientService {
 
     private final KeyService keyService;
@@ -18,28 +24,6 @@ public class PatientService {
         this.mediaService = new MediaService();
     }
 
-    public void encryptAndPrepareRecord(PatientRecord record, String symptoms, String diagnosis) throws Exception {
-        // Load Keys
-        PublicKey doctorKey = keyService.loadPublicKey(KeyService.DOCTOR_PUBLIC_KEY);
-        PublicKey nurseKey = keyService.loadPublicKey(KeyService.NURSE_PUBLIC_KEY);
-
-        Encryptor doctorEncryptor = new Encryptor(doctorKey);
-        Encryptor nurseEncryptor = new Encryptor(nurseKey);
-
-        // Generate AES Key & Encrypt Data
-        SecretKey aesKey = doctorEncryptor.generateAESKey();
-        record.setEncryptedSymptoms(doctorEncryptor.encryptWithAES(symptoms, aesKey));
-        record.setEncryptedDiagnosis(doctorEncryptor.encryptWithAES(diagnosis, aesKey));
-
-        // Process Media
-        MediaService.MediaResult mediaResult = mediaService.processMediaFiles(doctorEncryptor, aesKey);
-        record.setEncryptedImages(mediaResult.imageBytes);
-        record.setEncryptedVideos(mediaResult.videoBytes);
-        
-        record.setDoctorEncryptedAesKey(doctorEncryptor.encryptAESKeyWithRSA(aesKey));
-        record.setNurseEncryptedAesKey(nurseEncryptor.encryptAESKeyWithRSA(aesKey));
-    }
-
     public MediaService.MediaResult processEncryption(PatientRecord record, String symptoms, String diagnosis) throws Exception {
         PublicKey doctorKey = keyService.loadPublicKey(KeyService.DOCTOR_PUBLIC_KEY);
         PublicKey nurseKey = keyService.loadPublicKey(KeyService.NURSE_PUBLIC_KEY);
@@ -48,15 +32,15 @@ public class PatientService {
         Encryptor nurseEncryptor = new Encryptor(nurseKey);
 
         SecretKey aesKey = doctorEncryptor.generateAESKey();
-        record.setEncryptedSymptoms(doctorEncryptor.encryptWithAES(symptoms, aesKey));
-        record.setEncryptedDiagnosis(doctorEncryptor.encryptWithAES(diagnosis, aesKey));
+        record.setEncryptedSymptoms(Base64.getEncoder().encodeToString(doctorEncryptor.encryptWithAES(symptoms, aesKey)));
+        record.setEncryptedDiagnosis(Base64.getEncoder().encodeToString(doctorEncryptor.encryptWithAES(diagnosis, aesKey)));
 
         MediaService.MediaResult mediaResult = mediaService.processMediaFiles(doctorEncryptor, aesKey);
-        record.setEncryptedImages(mediaResult.imageBytes);
-        record.setEncryptedVideos(mediaResult.videoBytes);
+        record.setEncryptedImages(Base64.getEncoder().encodeToString(mediaResult.imageBytes));
+        record.setEncryptedVideos(Base64.getEncoder().encodeToString(mediaResult.videoBytes));
 
-        record.setDoctorEncryptedAesKey(doctorEncryptor.encryptAESKeyWithRSA(aesKey));
-        record.setNurseEncryptedAesKey(nurseEncryptor.encryptAESKeyWithRSA(aesKey));
+        record.setDoctorEncryptedAesKey(Base64.getEncoder().encodeToString(doctorEncryptor.encryptAESKeyWithRSA(aesKey)));
+        record.setNurseEncryptedAesKey(Base64.getEncoder().encodeToString(nurseEncryptor.encryptAESKeyWithRSA(aesKey)));
 
         return mediaResult;
     }
@@ -66,23 +50,16 @@ public class PatientService {
         PrivateKey privateKey = keyService.loadPrivateKey(keyPath);
 
         Decryptor decryptor = new Decryptor(privateKey);
-        byte[] encryptedAesKey = isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey();
+        byte[] encryptedAesKey = Base64.getDecoder().decode(isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey());
 
         if (encryptedAesKey == null || encryptedAesKey.length == 0) {
             throw new Exception("No encrypted key found for this user role.");
         }
 
         SecretKey aesKey = decryptor.decryptAESKey(encryptedAesKey);
-        
-        // Decrypt strings (we return them, or print them? Service should return data)
-        // But the method signature is void. Let's change it to return a DecryptedRecord DTO?
-        // Or just return the strings.
-        // For now, let's just restore media here, and let the caller decrypt strings using a helper?
-        // No, the service should do the work.
-        
-        // We can't easily modify the "record" to be decrypted since it holds encrypted bytes.
-        // We will just restore media here.
-        mediaService.restoreMedia(record.getRecordIndex(), record.getEncryptedImages(), record.getEncryptedVideos(), decryptor, aesKey);
+        byte[] imgBytes = record.getEncryptedImages() != null ? Base64.getDecoder().decode(record.getEncryptedImages()) : new byte[0];
+        byte[] vidBytes = record.getEncryptedVideos() != null ? Base64.getDecoder().decode(record.getEncryptedVideos()) : new byte[0];
+        mediaService.restoreMedia(record.getRecordIndex(), imgBytes, vidBytes, decryptor, aesKey);
     }
 
     public String[] decryptMedicalData(PatientRecord record, boolean isDoctor) throws Exception {
@@ -90,15 +67,15 @@ public class PatientService {
         PrivateKey privateKey = keyService.loadPrivateKey(keyPath);
 
         Decryptor decryptor = new Decryptor(privateKey);
-        byte[] encryptedAesKey = isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey();
+        byte[] encryptedAesKey = Base64.getDecoder().decode(isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey());
 
         if (encryptedAesKey == null || encryptedAesKey.length == 0) {
             throw new Exception("No encrypted key found for this user role.");
         }
 
         SecretKey aesKey = decryptor.decryptAESKey(encryptedAesKey);
-        String symptoms = decryptor.decryptString(record.getEncryptedSymptoms(), aesKey);
-        String diagnosis = decryptor.decryptString(record.getEncryptedDiagnosis(), aesKey);
+        String symptoms = decryptor.decryptString(Base64.getDecoder().decode(record.getEncryptedSymptoms()), aesKey);
+        String diagnosis = decryptor.decryptString(Base64.getDecoder().decode(record.getEncryptedDiagnosis()), aesKey);
         
         return new String[]{symptoms, diagnosis};
     }
@@ -108,7 +85,7 @@ public class PatientService {
         PrivateKey privateKey = keyService.loadPrivateKey(keyPath);
 
         Decryptor decryptor = new Decryptor(privateKey);
-        byte[] encryptedAesKey = isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey();
+        byte[] encryptedAesKey = Base64.getDecoder().decode(isDoctor ? record.getDoctorEncryptedAesKey() : record.getNurseEncryptedAesKey());
 
         if (encryptedAesKey == null || encryptedAesKey.length == 0) {
             return new HashMap<>();
@@ -117,14 +94,14 @@ public class PatientService {
         SecretKey aesKey = decryptor.decryptAESKey(encryptedAesKey);
         Map<String, String> media = new HashMap<>();
 
-        byte[] imgBytes = mediaService.decryptImageToBytes(record.getEncryptedImages(), decryptor, aesKey);
-        if (imgBytes != null) {
-            media.put("image", Base64.getEncoder().encodeToString(imgBytes));
+        if (record.getEncryptedImages() != null && !record.getEncryptedImages().isEmpty()) {
+            byte[] imgBytes = mediaService.decryptImageToBytes(Base64.getDecoder().decode(record.getEncryptedImages()), decryptor, aesKey);
+            if (imgBytes != null) media.put("image", Base64.getEncoder().encodeToString(imgBytes));
         }
 
-        byte[] vidBytes = mediaService.decryptVideoToBytes(record.getEncryptedVideos(), decryptor, aesKey);
-        if (vidBytes != null) {
-            media.put("video", Base64.getEncoder().encodeToString(vidBytes));
+        if (record.getEncryptedVideos() != null && !record.getEncryptedVideos().isEmpty()) {
+            byte[] vidBytes = mediaService.decryptVideoToBytes(Base64.getDecoder().decode(record.getEncryptedVideos()), decryptor, aesKey);
+            if (vidBytes != null) media.put("video", Base64.getEncoder().encodeToString(vidBytes));
         }
 
         return media;
