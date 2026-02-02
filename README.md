@@ -113,11 +113,11 @@ mysql-Zero-trust/
 ### Admin Finishes:
 - [ ] Run `add_[name]_to_server.bat` in `Server/certs/` for each client
 
-try to use less tokens
+---
 
-make ssure the server and the clients and the database have PROPER config to communicate with eachother cuz rn its not really doing anything 
-Imt not sure which is broken/ te client not connecting to the server? or the server not talking with supabase
+## How Certificate Authentication Works
 
-also im in the login screen and it didnt really ask me for certs
-
-Also just stuck on login it says failed to fetch
+1. **Role is embedded in certificate**: When generating client certificates, the role (doctor/nurse) is embedded in the OU (Organizational Unit) field
+2. **Server extracts role**: The server automatically extracts the role from the certificate's OU field during mTLS handshake
+3. **No manual selection needed**: Users don't choose their role - it's determined by their certificate
+4. **Encryption is automatic**: Records are encrypted for all available public keys (doctor + nurse keys)

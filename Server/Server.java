@@ -245,25 +245,61 @@ public class Server {
         try {
             Map<String,String> d = parseJson(new String(ex.getRequestBody().readAllBytes()));
             String role = null;
-            if (isSupabase) {
-                String url = cfg.getProperty("supabase.url") + "/rest/v1/users?username=eq." + d.get("username") + "&password_hash=eq." + d.get("passwordHash") + "&select=role";
-                HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url))
-                    .header("apikey", cfg.getProperty("supabase.key"))
-                    .header("Authorization", "Bearer " + cfg.getProperty("supabase.key")).GET().build();
-                String resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString()).body();
-                System.out.println("Login response: " + resp);
-                if (resp.contains("role")) {
-                    int i = resp.indexOf("role") + 7;
-                    int j = resp.indexOf('"', i);
-                    role = resp.substring(i, j);
+            
+            // Extract role from client certificate if mTLS is enabled
+            if (mtlsEnabled && ex instanceof HttpsExchange) {
+                try {
+                    HttpsExchange httpsEx = (HttpsExchange) ex;
+                    SSLSession sslSession = httpsEx.getSSLSession();
+                    java.security.cert.Certificate[] certs = sslSession.getPeerCertificates();
+                    if (certs.length > 0 && certs[0] instanceof java.security.cert.X509Certificate) {
+                        java.security.cert.X509Certificate clientCert = (java.security.cert.X509Certificate) certs[0];
+                        // Extract role from certificate CN or OU field
+                        String dn = clientCert.getSubjectX500Principal().getName();
+                        System.out.println("Client cert DN: " + dn);
+                        // Check for role in CN (e.g., CN=doctor_bob or CN=nurse_alice)
+                        if (dn.contains("CN=doctor_") || dn.contains("CN=Doctor_")) {
+                            role = "doctor";
+                        } else if (dn.contains("CN=nurse_") || dn.contains("CN=Nurse_")) {
+                            role = "nurse";
+                        }
+                        // Also check OU field (organizational unit)
+                        if (role == null) {
+                            if (dn.contains("OU=doctor") || dn.contains("OU=Doctor")) {
+                                role = "doctor";
+                            } else if (dn.contains("OU=nurse") || dn.contains("OU=Nurse")) {
+                                role = "nurse";
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("Could not extract role from certificate: " + e.getMessage());
                 }
-            } else {
-                PreparedStatement ps = db.prepareStatement("SELECT role FROM users WHERE username=? AND password_hash=?");
-                ps.setString(1, d.get("username"));
-                ps.setString(2, d.get("passwordHash"));
-                ResultSet rs = ps.executeQuery();
-                if (rs.next()) role = rs.getString("role");
             }
+            
+            // Fallback to database authentication if role not found in certificate
+            if (role == null) {
+                if (isSupabase) {
+                    String url = cfg.getProperty("supabase.url") + "/rest/v1/users?username=eq." + d.get("username") + "&password_hash=eq." + d.get("passwordHash") + "&select=role";
+                    HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url))
+                        .header("apikey", cfg.getProperty("supabase.key"))
+                        .header("Authorization", "Bearer " + cfg.getProperty("supabase.key")).GET().build();
+                    String resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString()).body();
+                    System.out.println("Login response: " + resp);
+                    if (resp.contains("role")) {
+                        int i = resp.indexOf("role") + 7;
+                        int j = resp.indexOf('"', i);
+                        role = resp.substring(i, j);
+                    }
+                } else {
+                    PreparedStatement ps = db.prepareStatement("SELECT role FROM users WHERE username=? AND password_hash=?");
+                    ps.setString(1, d.get("username"));
+                    ps.setString(2, d.get("passwordHash"));
+                    ResultSet rs = ps.executeQuery();
+                    if (rs.next()) role = rs.getString("role");
+                }
+            }
+            
             if (role != null) send(ex, 200, "{\"ok\":true,\"role\":\"" + role + "\"}");
             else send(ex, 401, "{\"error\":\"Invalid\"}");
         } catch (Exception e) { e.printStackTrace(); send(ex, 500, "{\"error\":\"" + e.getMessage() + "\"}"); }
