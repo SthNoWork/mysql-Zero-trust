@@ -7,18 +7,19 @@ import java.nio.file.*;
 import java.security.*;
 import java.sql.*;
 import java.util.*;
+import java.security.MessageDigest;
 
 public class Server {
     static Connection db;
     static Properties cfg = new Properties();
     static HttpClient httpClient = HttpClient.newHttpClient();
-    static String TABLE, SCHEMA;
+    static String TABLE = "Hospital_Records", SCHEMA = "hospital";
     static boolean isSupabase, mtlsEnabled;
 
     public static void main(String[] args) throws Exception {
         cfg.load(new FileInputStream("config.properties"));
-        TABLE = cfg.getProperty("db.table", "patient_records");
-        SCHEMA = cfg.getProperty("db.schema", "public");
+        TABLE = cfg.getProperty("db.table", "Hospital_Records");
+        SCHEMA = cfg.getProperty("db.schema", "hospital");
         isSupabase = "supabase".equals(cfg.getProperty("db.type"));
         mtlsEnabled = "true".equals(cfg.getProperty("mtls.enabled", "false"));
         
@@ -40,11 +41,11 @@ public class Server {
 
     static void connectDB() throws Exception {
         String t = cfg.getProperty("db.type", "mysql");
-        String url = t.equals("postgresql") 
-            ? "jdbc:postgresql://" + cfg.getProperty("db.host") + ":" + cfg.getProperty("db.port") + "/" + cfg.getProperty("db.name")
-            : "jdbc:mysql://" + cfg.getProperty("db.host") + ":" + cfg.getProperty("db.port") + "/" + cfg.getProperty("db.name") + "?useSSL=false&allowPublicKeyRetrieval=true";
-        Class.forName(t.equals("postgresql") ? "org.postgresql.Driver" : "com.mysql.cj.jdbc.Driver");
+        String schema = cfg.getProperty("db.schema", "hospital");
+        String url = "jdbc:mysql://" + cfg.getProperty("db.host") + ":" + cfg.getProperty("db.port") + "/" + schema + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+        Class.forName("com.mysql.cj.jdbc.Driver");
         db = DriverManager.getConnection(url, cfg.getProperty("db.user"), cfg.getProperty("db.pass"));
+        System.out.println("Connected to MySQL: " + schema);
     }
 
     static HttpsServer setupSSL(int port) throws Exception {
@@ -122,64 +123,84 @@ public class Server {
 
     static String mysqlGet(Map<String,String> params) throws Exception {
         StringBuilder sql = new StringBuilder("SELECT * FROM " + TABLE + " WHERE 1=1");
-        List<String> vals = new ArrayList<>();
+        List<Object> vals = new ArrayList<>();
         
-        if (params.containsKey("id")) { sql.append(" AND hashed_patient_id=?"); vals.add(params.get("id")); }
-        if (params.containsKey("role")) { sql.append(" AND allowed_roles LIKE ?"); vals.add("%" + params.get("role") + "%"); }
-        if (params.containsKey("createdBy")) { sql.append(" AND created_by_role=?"); vals.add(params.get("createdBy")); }
+        if (params.containsKey("id")) { sql.append(" AND patient_id_hash=?"); vals.add(sha256(params.get("id"))); }
+        if (params.containsKey("name")) { sql.append(" AND patient_name LIKE ?"); vals.add("%" + params.get("name") + "%"); }
+        if (params.containsKey("doctor")) { sql.append(" AND doctor_name=?"); vals.add(params.get("doctor")); }
+        if (params.containsKey("nurse")) { sql.append(" AND nurse_name=?"); vals.add(params.get("nurse")); }
         
         PreparedStatement ps = db.prepareStatement(sql.toString());
-        for (int i = 0; i < vals.size(); i++) ps.setString(i + 1, vals.get(i));
+        for (int i = 0; i < vals.size(); i++) ps.setObject(i + 1, vals.get(i));
         ResultSet rs = ps.executeQuery();
         StringBuilder json = new StringBuilder("[");
         while (rs.next()) {
             if (json.length() > 1) json.append(",");
-            json.append("{\"hashedPatientId\":\"").append(rs.getString("hashed_patient_id")).append("\"");
-            json.append(",\"encryptedName\":\"").append(esc(rs.getString("encrypted_name"))).append("\"");
-            json.append(",\"encryptedDiagnosis\":\"").append(esc(rs.getString("encrypted_diagnosis"))).append("\"");
-            json.append(",\"encryptedTreatment\":\"").append(esc(rs.getString("encrypted_treatment"))).append("\"");
-            json.append(",\"encryptedPrescription\":\"").append(esc(rs.getString("encrypted_prescription"))).append("\"");
-            json.append(",\"encryptedMedia\":\"").append(esc(rs.getString("encrypted_media"))).append("\"");
-            json.append(",\"mediaType\":\"").append(esc(rs.getString("media_type"))).append("\"");
-            json.append(",\"createdByRole\":\"").append(rs.getString("created_by_role")).append("\"");
-            json.append(",\"allowedRoles\":\"").append(rs.getString("allowed_roles")).append("\"}");
+            json.append("{\"recordIndex\":").append(rs.getInt("record_index"));
+            json.append(",\"patientIdHash\":\"").append(esc(rs.getString("patient_id_hash"))).append("\"");
+            json.append(",\"patientName\":\"").append(esc(rs.getString("patient_name"))).append("\"");
+            json.append(",\"patientDob\":\"").append(rs.getDate("patient_dob")).append("\"");
+            json.append(",\"doctorName\":\"").append(esc(rs.getString("doctor_name"))).append("\"");
+            json.append(",\"nurseName\":\"").append(esc(rs.getString("nurse_name"))).append("\"");
+            json.append(",\"checkInDate\":\"").append(rs.getTimestamp("check_in_date")).append("\"");
+            json.append(",\"encryptedSymptoms\":\"").append(b64(rs.getBytes("encrypted_symptoms"))).append("\"");
+            json.append(",\"encryptedDiagnosis\":\"").append(b64(rs.getBytes("encrypted_diagnosis"))).append("\"");
+            json.append(",\"encryptedImages\":\"").append(b64(rs.getBytes("encrypted_images"))).append("\"");
+            json.append(",\"encryptedVideos\":\"").append(b64(rs.getBytes("encrypted_videos"))).append("\"");
+            json.append(",\"encryptedAudios\":\"").append(b64(rs.getBytes("encrypted_audios"))).append("\"");
+            json.append(",\"doctorEncryptedAesKey\":\"").append(b64(rs.getBytes("doctor_encrypted_aes_key"))).append("\"");
+            json.append(",\"nurseEncryptedAesKey\":\"").append(b64(rs.getBytes("nurse_encrypted_aes_key"))).append("\"}");
         }
         return json.append("]").toString();
     }
 
     static void mysqlPost(String body) throws Exception {
         Map<String,String> d = parseJson(body);
-        PreparedStatement ps = db.prepareStatement("INSERT INTO " + TABLE + " (hashed_patient_id,encrypted_name,encrypted_diagnosis,encrypted_treatment,encrypted_prescription,encrypted_media,media_type,created_by_role,allowed_roles) VALUES (?,?,?,?,?,?,?,?,?)");
-        ps.setString(1, d.get("hashedPatientId"));
-        ps.setString(2, d.get("encryptedName"));
-        ps.setString(3, d.get("encryptedDiagnosis"));
-        ps.setString(4, d.get("encryptedTreatment"));
-        ps.setString(5, d.get("encryptedPrescription"));
-        ps.setString(6, d.get("encryptedMedia"));
-        ps.setString(7, d.get("mediaType"));
-        ps.setString(8, d.getOrDefault("createdByRole", "unknown"));
-        ps.setString(9, d.getOrDefault("allowedRoles", "doctor,nurse"));
+        PreparedStatement ps = db.prepareStatement(
+            "INSERT INTO " + TABLE + " (patient_id_hash,patient_name,patient_dob,doctor_name,nurse_name," +
+            "encrypted_symptoms,encrypted_diagnosis,encrypted_images,encrypted_videos,encrypted_audios," +
+            "doctor_encrypted_aes_key,nurse_encrypted_aes_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+        ps.setString(1, sha256(d.get("patientId")));
+        ps.setString(2, d.get("patientName"));
+        ps.setDate(3, d.get("patientDob") != null ? java.sql.Date.valueOf(d.get("patientDob")) : null);
+        ps.setString(4, d.get("doctorName"));
+        ps.setString(5, d.get("nurseName"));
+        ps.setBytes(6, d64(d.get("encryptedSymptoms")));
+        ps.setBytes(7, d64(d.get("encryptedDiagnosis")));
+        ps.setBytes(8, d64(d.get("encryptedImages")));
+        ps.setBytes(9, d64(d.get("encryptedVideos")));
+        ps.setBytes(10, d64(d.get("encryptedAudios")));
+        ps.setBytes(11, d64(d.get("doctorEncryptedAesKey")));
+        ps.setBytes(12, d64(d.get("nurseEncryptedAesKey")));
         ps.executeUpdate();
     }
     
     static void mysqlPut(String hid, String body) throws Exception {
         Map<String,String> d = parseJson(body);
-        PreparedStatement ps = db.prepareStatement("UPDATE " + TABLE + " SET encrypted_name=?,encrypted_diagnosis=?,encrypted_treatment=?,encrypted_prescription=?,encrypted_media=?,media_type=? WHERE hashed_patient_id=?");
-        ps.setString(1, d.get("encryptedName"));
-        ps.setString(2, d.get("encryptedDiagnosis"));
-        ps.setString(3, d.get("encryptedTreatment"));
-        ps.setString(4, d.get("encryptedPrescription"));
-        ps.setString(5, d.get("encryptedMedia"));
-        ps.setString(6, d.get("mediaType"));
-        ps.setString(7, hid);
+        PreparedStatement ps = db.prepareStatement(
+            "UPDATE " + TABLE + " SET patient_name=?,patient_dob=?,doctor_name=?,nurse_name=?," +
+            "encrypted_symptoms=?,encrypted_diagnosis=?,encrypted_images=?,encrypted_videos=?,encrypted_audios=?," +
+            "doctor_encrypted_aes_key=?,nurse_encrypted_aes_key=? WHERE record_index=?");
+        ps.setString(1, d.get("patientName"));
+        ps.setDate(2, d.get("patientDob") != null ? java.sql.Date.valueOf(d.get("patientDob")) : null);
+        ps.setString(3, d.get("doctorName"));
+        ps.setString(4, d.get("nurseName"));
+        ps.setBytes(5, d64(d.get("encryptedSymptoms")));
+        ps.setBytes(6, d64(d.get("encryptedDiagnosis")));
+        ps.setBytes(7, d64(d.get("encryptedImages")));
+        ps.setBytes(8, d64(d.get("encryptedVideos")));
+        ps.setBytes(9, d64(d.get("encryptedAudios")));
+        ps.setBytes(10, d64(d.get("doctorEncryptedAesKey")));
+        ps.setBytes(11, d64(d.get("nurseEncryptedAesKey")));
+        ps.setInt(12, Integer.parseInt(hid));
         ps.executeUpdate();
     }
 
     static String supabaseGet(Map<String,String> params) throws Exception {
         StringBuilder url = new StringBuilder(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?select=*");
-        if (params.containsKey("id")) url.append("&hashed_patient_id=eq.").append(params.get("id"));
-        if (params.containsKey("role")) url.append("&allowed_roles=like.*").append(params.get("role")).append("*");
-        if (params.containsKey("createdBy")) url.append("&created_by_role=eq.").append(params.get("createdBy"));
+        if (params.containsKey("id")) url.append("&patient_id_hash=eq.").append(sha256(params.get("id")));
+        if (params.containsKey("name")) url.append("&patient_name=like.*").append(params.get("name")).append("*");
+        if (params.containsKey("doctor")) url.append("&doctor_name=eq.").append(params.get("doctor"));
         
         HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url.toString()))
             .header("apikey", cfg.getProperty("supabase.key"))
@@ -187,29 +208,38 @@ public class Server {
         HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
         System.out.println("Supabase GET: " + response.statusCode() + " " + url);
         String resp = response.body();
-        return resp.replace("hashed_patient_id", "hashedPatientId")
-                   .replace("encrypted_name", "encryptedName")
+        return resp.replace("record_index", "recordIndex")
+                   .replace("patient_id_hash", "patientIdHash")
+                   .replace("patient_name", "patientName")
+                   .replace("patient_dob", "patientDob")
+                   .replace("doctor_name", "doctorName")
+                   .replace("nurse_name", "nurseName")
+                   .replace("check_in_date", "checkInDate")
+                   .replace("encrypted_symptoms", "encryptedSymptoms")
                    .replace("encrypted_diagnosis", "encryptedDiagnosis")
-                   .replace("encrypted_treatment", "encryptedTreatment")
-                   .replace("encrypted_prescription", "encryptedPrescription")
-                   .replace("encrypted_media", "encryptedMedia")
-                   .replace("media_type", "mediaType")
-                   .replace("created_by_role", "createdByRole")
-                   .replace("allowed_roles", "allowedRoles");
+                   .replace("encrypted_images", "encryptedImages")
+                   .replace("encrypted_videos", "encryptedVideos")
+                   .replace("encrypted_audios", "encryptedAudios")
+                   .replace("doctor_encrypted_aes_key", "doctorEncryptedAesKey")
+                   .replace("nurse_encrypted_aes_key", "nurseEncryptedAesKey");
     }
 
     static void supabasePost(String body) throws Exception {
         Map<String,String> d = parseJson(body);
         StringBuilder json = new StringBuilder("{");
-        json.append("\"hashed_patient_id\":\"").append(d.get("hashedPatientId")).append("\"");
-        json.append(",\"encrypted_name\":\"").append(esc(d.get("encryptedName"))).append("\"");
-        json.append(",\"encrypted_diagnosis\":\"").append(esc(d.get("encryptedDiagnosis"))).append("\"");
-        json.append(",\"encrypted_treatment\":\"").append(esc(d.get("encryptedTreatment"))).append("\"");
-        json.append(",\"encrypted_prescription\":\"").append(esc(d.get("encryptedPrescription"))).append("\"");
-        if (d.get("encryptedMedia") != null) json.append(",\"encrypted_media\":\"").append(esc(d.get("encryptedMedia"))).append("\"");
-        if (d.get("mediaType") != null) json.append(",\"media_type\":\"").append(d.get("mediaType")).append("\"");
-        json.append(",\"created_by_role\":\"").append(d.getOrDefault("createdByRole","unknown")).append("\"");
-        json.append(",\"allowed_roles\":\"").append(d.getOrDefault("allowedRoles","doctor,nurse")).append("\"}");
+        json.append("\"patient_id_hash\":\"").append(sha256(d.get("patientId"))).append("\"");
+        json.append(",\"patient_name\":\"").append(esc(d.get("patientName"))).append("\"");
+        if (d.get("patientDob") != null) json.append(",\"patient_dob\":\"").append(d.get("patientDob")).append("\"");
+        json.append(",\"doctor_name\":\"").append(esc(d.get("doctorName"))).append("\"");
+        json.append(",\"nurse_name\":\"").append(esc(d.get("nurseName"))).append("\"");
+        if (d.get("encryptedSymptoms") != null) json.append(",\"encrypted_symptoms\":\"").append(d.get("encryptedSymptoms")).append("\"");
+        if (d.get("encryptedDiagnosis") != null) json.append(",\"encrypted_diagnosis\":\"").append(d.get("encryptedDiagnosis")).append("\"");
+        if (d.get("encryptedImages") != null) json.append(",\"encrypted_images\":\"").append(d.get("encryptedImages")).append("\"");
+        if (d.get("encryptedVideos") != null) json.append(",\"encrypted_videos\":\"").append(d.get("encryptedVideos")).append("\"");
+        if (d.get("encryptedAudios") != null) json.append(",\"encrypted_audios\":\"").append(d.get("encryptedAudios")).append("\"");
+        if (d.get("doctorEncryptedAesKey") != null) json.append(",\"doctor_encrypted_aes_key\":\"").append(d.get("doctorEncryptedAesKey")).append("\"");
+        if (d.get("nurseEncryptedAesKey") != null) json.append(",\"nurse_encrypted_aes_key\":\"").append(d.get("nurseEncryptedAesKey")).append("\"");
+        json.append("}");
         HttpRequest req = HttpRequest.newBuilder().uri(URI.create(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE))
             .header("apikey", cfg.getProperty("supabase.key"))
             .header("Authorization", "Bearer " + cfg.getProperty("supabase.key"))
@@ -223,14 +253,19 @@ public class Server {
     static void supabasePut(String hid, String body) throws Exception {
         Map<String,String> d = parseJson(body);
         StringBuilder json = new StringBuilder("{");
-        json.append("\"encrypted_name\":\"").append(esc(d.get("encryptedName"))).append("\"");
-        json.append(",\"encrypted_diagnosis\":\"").append(esc(d.get("encryptedDiagnosis"))).append("\"");
-        json.append(",\"encrypted_treatment\":\"").append(esc(d.get("encryptedTreatment"))).append("\"");
-        json.append(",\"encrypted_prescription\":\"").append(esc(d.get("encryptedPrescription"))).append("\"");
-        if (d.get("encryptedMedia") != null) json.append(",\"encrypted_media\":\"").append(esc(d.get("encryptedMedia"))).append("\"");
-        if (d.get("mediaType") != null) json.append(",\"media_type\":\"").append(d.get("mediaType")).append("\"");
+        json.append("\"patient_name\":\"").append(esc(d.get("patientName"))).append("\"");
+        if (d.get("patientDob") != null) json.append(",\"patient_dob\":\"").append(d.get("patientDob")).append("\"");
+        json.append(",\"doctor_name\":\"").append(esc(d.get("doctorName"))).append("\"");
+        json.append(",\"nurse_name\":\"").append(esc(d.get("nurseName"))).append("\"");
+        if (d.get("encryptedSymptoms") != null) json.append(",\"encrypted_symptoms\":\"").append(d.get("encryptedSymptoms")).append("\"");
+        if (d.get("encryptedDiagnosis") != null) json.append(",\"encrypted_diagnosis\":\"").append(d.get("encryptedDiagnosis")).append("\"");
+        if (d.get("encryptedImages") != null) json.append(",\"encrypted_images\":\"").append(d.get("encryptedImages")).append("\"");
+        if (d.get("encryptedVideos") != null) json.append(",\"encrypted_videos\":\"").append(d.get("encryptedVideos")).append("\"");
+        if (d.get("encryptedAudios") != null) json.append(",\"encrypted_audios\":\"").append(d.get("encryptedAudios")).append("\"");
+        if (d.get("doctorEncryptedAesKey") != null) json.append(",\"doctor_encrypted_aes_key\":\"").append(d.get("doctorEncryptedAesKey")).append("\"");
+        if (d.get("nurseEncryptedAesKey") != null) json.append(",\"nurse_encrypted_aes_key\":\"").append(d.get("nurseEncryptedAesKey")).append("\"");
         json.append("}");
-        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?hashed_patient_id=eq." + hid))
+        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(cfg.getProperty("supabase.url") + "/rest/v1/" + TABLE + "?record_index=eq." + hid))
             .header("apikey", cfg.getProperty("supabase.key"))
             .header("Authorization", "Bearer " + cfg.getProperty("supabase.key"))
             .header("Content-Type", "application/json")
@@ -324,4 +359,7 @@ public class Server {
     static void send(HttpExchange ex, int code, String body) throws IOException { byte[] b = body.getBytes(); ex.getResponseHeaders().set("Content-Type", "application/json"); ex.sendResponseHeaders(code, b.length); ex.getResponseBody().write(b); ex.close(); }
     static String esc(String s) { return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\""); }
     static Map<String,String> parseJson(String j) { Map<String,String> m = new HashMap<>(); for (String p : j.replaceAll("[{}\"]", "").split(",")) { String[] kv = p.split(":"); if (kv.length == 2) m.put(kv[0].trim(), kv[1].trim()); } return m; }
+    static String b64(byte[] b) { return b == null ? "" : Base64.getEncoder().encodeToString(b); }
+    static byte[] d64(String s) { return s == null || s.isEmpty() ? null : Base64.getDecoder().decode(s); }
+    static String sha256(String s) throws Exception { if (s == null) return null; MessageDigest md = MessageDigest.getInstance("SHA-256"); byte[] h = md.digest(s.getBytes("UTF-8")); StringBuilder sb = new StringBuilder(); for (byte b : h) sb.append(String.format("%02x", b)); return sb.toString(); }
 }

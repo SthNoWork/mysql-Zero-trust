@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Record System</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; text-align: center; }
+        .hidden { display: none; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        button:hover { background-color: #0056b3; }
+        .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+        .nav button { flex: 1; margin: 0; }
+        #results { margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px; }
+        .record-card { background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin-bottom: 10px; border-radius: 4px; }
+        .status { text-align: center; margin-top: 10px; font-weight: bold; }
+        .success { color: green; }
+        .error { color: red; }
+        .loading-bar { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden; margin: 10px 0; display: none; }
+        .loading-bar.active { display: block; }
+        .loading-bar-fill { height: 100%; background: linear-gradient(90deg, #007bff, #0056b3); animation: loading 1.5s ease-in-out infinite; }
+        @keyframes loading { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; opacity: 0.6; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ffffff; border-top: 2px solid transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-left: 5px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div class="container" id="login-section">
+    <h1>Login</h1>
+    <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="dbUser">
+    </div>
+    <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="dbPass">
+    </div>
+    <button onclick="login()">Login</button>
+    <p class="status" id="login-status"></p>
+</div>
+
+<div class="container hidden" id="main-section">
+    <h1>Hospital System</h1>
+    <div class="nav">
+        <button onclick="showSection('insert')">Insert Record</button>
+        <button onclick="showSection('search')">Search Record</button>
+        <button onclick="showSection('update')">Update Record</button>
+        <button onclick="logout()" style="background-color: #dc3545;">Logout</button>
+    </div>
+    <p class="status" id="main-status"></p>
+    <div class="loading-bar" id="loading-bar"><div class="loading-bar-fill"></div></div>
+
+    <!-- INSERT SECTION -->
+    <div id="insert-section" class="hidden">
+        <h2>Insert New Record</h2>
+        <div class="form-group"><label>Patient ID</label><input type="text" id="ins-id"></div>
+        <div class="form-group"><label>Name</label><input type="text" id="ins-name"></div>
+        <div class="form-group"><label>DOB (yyyy-mm-dd)</label><input type="text" id="ins-dob"></div>
+        <div class="form-group"><label>Symptoms</label><textarea id="ins-sym"></textarea></div>
+        <div class="form-group"><label>Diagnosis</label><textarea id="ins-diag"></textarea></div>
+        <div class="form-group"><label>Media Files (Images/Videos/Audio)</label><input type="file" id="ins-files" multiple></div>
+        <button onclick="insertRecord()">Submit Record</button>
+    </div>
+
+    <!-- SEARCH SECTION -->
+    <div id="search-section" class="hidden">
+        <h2>Search Record</h2>
+        <!-- Role is now auto-detected from client certificate -->
+        <div class="form-group">
+            <label>Search By</label>
+            <select id="search-type">
+                <option value="id">Patient ID</option>
+                <option value="name">Patient Name</option>
+                <option value="dob">Date of Birth</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Query</label>
+            <input type="text" id="search-query">
+        </div>
+        <button onclick="searchRecord()">Search</button>
+        <div id="results"></div>
+    </div>
+
+    <!-- UPDATE SECTION -->
+    <div id="update-section" class="hidden">
+        <h2>Update Record</h2>
+        <p>First, search for the record you want to update.</p>
+        <div class="form-group">
+            <label>Search By</label>
+            <select id="upd-search-type">
+                <option value="name">Patient Name</option>
+                <option value="id">Patient ID</option>
+                <option value="dob">Date of Birth</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Query</label>
+            <input type="text" id="upd-search-query">
+        </div>
+        <button onclick="searchForUpdate()">Find Record</button>
+        
+        <div id="upd-results"></div>
+
+        <div id="update-form" class="hidden">
+            <hr>
+            <h3>Edit Details</h3>
+            <input type="hidden" id="upd-index">
+            <input type="hidden" id="upd-id">
+            <div class="form-group"><label>Name</label><input type="text" id="upd-name"></div>
+            <div class="form-group"><label>DOB</label><input type="text" id="upd-dob"></div>
+            <div class="form-group"><label>Symptoms</label><textarea id="upd-sym"></textarea></div>
+            <div class="form-group"><label>Diagnosis</label><textarea id="upd-diag"></textarea></div>
+            <div class="form-group"><label>Update Media (Replaces existing)</label><input type="file" id="upd-files" multiple></div>
+            <button onclick="submitUpdate()">Save Changes</button>
+        </div>
+    </div>
+
+    <p class="status" id="main-status"></p>
+</div>
+
+<script>
+    // Use relative path so it works on localhost, ngrok, or any domain
+    const API_URL = '/api';
+    
+    // Logout on browser/tab close to free the certificate slot
+    window.addEventListener('beforeunload', function(e) {
+        const token = localStorage.getItem('token');
+        if (token) {
+            // Use sendBeacon for reliable logout on close
+            navigator.sendBeacon(`${API_URL}/logout`, new Blob([JSON.stringify({token})], {type: 'application/json'}));
+        }
+    });
+    
+    async function logout() {
+        const token = localStorage.getItem('token');
+        if (token) {
+            try {
+                await fetch(`${API_URL}/logout`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+            } catch (e) {
+                console.error('Logout error:', e);
+            }
+        }
+        localStorage.removeItem('token');
+        document.getElementById('main-section').classList.add('hidden');
+        document.getElementById('login-section').classList.remove('hidden');
+        document.getElementById('login-status').innerText = '';
+    }
+
+    async function login() {
+        const user = document.getElementById('dbUser').value;
+        const pass = document.getElementById('dbPass').value;
+        const statusEl = document.getElementById('login-status');
+        
+        try {
+            const res = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user, pass})
+            });
+            if (res.ok) {
+                const data = await res.json();
+                localStorage.setItem('token', data.token);
+                
+                document.getElementById('login-section').classList.add('hidden');
+                document.getElementById('main-section').classList.remove('hidden');
+                showSection('search');
+            } else if (res.status === 409) {
+                // Certificate already has an active session
+                statusEl.innerHTML = '⚠️ <strong>This certificate is already in use on another device/browser.</strong><br>Only 1 connection per certificate is allowed.<br><small>Ask the other user to logout, or wait for their session to expire.</small>';
+                statusEl.className = 'status error';
+            } else if (res.status === 401) {
+                statusEl.innerText = '❌ Invalid username or password';
+                statusEl.className = 'status error';
+            } else if (res.status === 403) {
+                statusEl.innerText = '❌ Client certificate not found. Please install your .p12 certificate.';
+                statusEl.className = 'status error';
+            } else {
+                const text = await res.text();
+                statusEl.innerText = '❌ Login Failed: ' + text;
+                statusEl.className = 'status error';
+            }
+        } catch (e) {
+            console.error(e);
+            statusEl.innerText = '❌ Connection Error - Is the server running?';
+            statusEl.className = 'status error';
+        }
+    }
+
+    function showSection(id) {
+        ['insert', 'search', 'update'].forEach(s => document.getElementById(`${s}-section`).classList.add('hidden'));
+        document.getElementById(`${id}-section`).classList.remove('hidden');
+        // Clear status and search results
+        document.getElementById('main-status').innerText = '';
+        document.getElementById('main-status').className = 'status';
+        document.getElementById('results').innerHTML = '';
+        // Clear update section state to prevent crashes when switching back
+        document.getElementById('upd-results').innerHTML = '';
+        document.getElementById('update-form').classList.add('hidden');
+        currentUpdateRecords = [];
+        // Clear search input fields
+        document.getElementById('search-query').value = '';
+        document.getElementById('upd-search-query').value = '';
+    }
+
+    async function insertRecord() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Submitting...<span class="spinner"></span>';
+        showLoading(true);
+        
+        const formData = new FormData();
+        formData.append('patientId', document.getElementById('ins-id').value);
+        formData.append('patientName', document.getElementById('ins-name').value);
+        formData.append('patientDob', document.getElementById('ins-dob').value);
+        formData.append('symptoms', document.getElementById('ins-sym').value);
+        formData.append('diagnosis', document.getElementById('ins-diag').value);
+
+        const fileInput = document.getElementById('ins-files');
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append('files', fileInput.files[i]);
+        }
+
+        const token = localStorage.getItem('token');
+        const status = document.getElementById('main-status');
+        
+        try {
+            const res = await fetch(`${API_URL}/insert`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token },
+                body: formData
+            });
+
+            if (res.ok) {
+                status.innerText = '✓ Record Inserted Successfully!';
+                status.className = 'status success';
+                document.querySelectorAll('#insert-section input, #insert-section textarea').forEach(i => i.value = '');
+            } else {
+                status.innerText = '✗ Insert Failed: ' + await res.text();
+                status.className = 'status error';
+            }
+        } catch (e) {
+            status.innerText = '✗ Error: ' + e.message;
+            status.className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Record';
+        }
+    }
+
+    async function searchRecord() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Searching...<span class="spinner"></span>';
+        showLoading(true);
+        
+        const type = document.getElementById('search-type').value;
+        const query = document.getElementById('search-query').value;
+        const token = localStorage.getItem('token');
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+        if (res.ok) {
+            const records = await res.json();
+            if (records.length === 0) {
+                resultsDiv.innerHTML = '<p class="status">No records found.</p>';
+                return;
+            }
+            records.forEach(r => {
+                const div = document.createElement('div');
+                div.className = 'record-card';
+                div.innerHTML = `
+                    <strong>${r.patientName}</strong> (ID: ${r.patientId || 'Hidden'})<br>
+                    DOB: ${r.patientDob} | Check-in: ${r.checkInDate || 'N/A'} | Doc: ${r.doctorName} | Nurse: ${r.nurseName}<br>
+                    <hr>
+                    <em>Symptoms:</em> ${r.symptoms}<br>
+                    <em>Diagnosis:</em> ${r.diagnosis}
+                    <br><button onclick="loadMedia(this, ${r.recordIndex})" style="width:auto; margin-top:10px; background-color:#6c757d;">Load Media</button>
+                    <div class="media-container"></div>
+                `;
+                resultsDiv.appendChild(div);
+            });
+        } else {
+            document.getElementById('main-status').innerText = '✗ Search Failed';
+            document.getElementById('main-status').className = 'status error';
+        }
+        } catch (e) {
+            document.getElementById('main-status').innerText = '✗ Error: ' + e.message;
+            document.getElementById('main-status').className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Search';
+        }
+    }
+
+    async function loadMedia(btn, id) {
+        btn.innerText = "Loading...";
+        btn.disabled = true;
+        const token = localStorage.getItem('token');
+        
+        try {
+            const res = await fetch(`${API_URL}/media?id=${id}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            
+            if (res.ok) {
+                const media = await res.json();
+                let mediaHtml = '';
+                
+                if (media.images && media.images.length > 0) {
+                    mediaHtml += '<br><strong>Images:</strong><br>';
+                    media.images.forEach(img => {
+                        mediaHtml += `<img src="data:image/jpeg;base64,${img}" style="max-width:100%; margin-top:10px; margin-right: 10px;">`;
+                    });
+                }
+                if (media.videos && media.videos.length > 0) {
+                    mediaHtml += '<br><strong>Videos:</strong><br>';
+                    media.videos.forEach(vid => {
+                        mediaHtml += `<video controls src="data:video/mp4;base64,${vid}" style="max-width:100%; margin-top:10px; margin-right: 10px;"></video>`;
+                    });
+                }
+                if (media.audios && media.audios.length > 0) {
+                    mediaHtml += '<br><strong>Audio Files:</strong><br>';
+                    media.audios.forEach(aud => {
+                        mediaHtml += `<audio controls src="data:audio/mpeg;base64,${aud}" style="width:100%; margin-top:10px; margin-right: 10px;"></audio>`;
+                    });
+                }
+                
+                if (mediaHtml === '') {
+                    mediaHtml = '<br><em>No media found.</em>';
+                }
+                
+                const container = btn.nextElementSibling;
+                container.innerHTML = mediaHtml;
+                btn.style.display = 'none';
+            } else {
+                btn.innerText = "Failed to load";
+            }
+        } catch (e) {
+            console.error(e);
+            btn.innerText = "Error";
+        }
+    }
+
+    let currentUpdateRecords = [];
+
+    async function searchForUpdate() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Searching...<span class="spinner"></span>';
+        showLoading(true);
+        
+        const type = document.getElementById('upd-search-type').value;
+        const query = document.getElementById('upd-search-query').value;
+        const token = localStorage.getItem('token');
+        const resultsDiv = document.getElementById('upd-results');
+        resultsDiv.innerHTML = '';
+        document.getElementById('update-form').classList.add('hidden');
+        
+        try {
+            const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            }); 
+
+            if (res.ok) {
+                currentUpdateRecords = await res.json();
+                if (currentUpdateRecords.length === 0) {
+                    resultsDiv.innerHTML = '<p>No records found.</p>';
+                    return;
+                }
+
+                currentUpdateRecords.forEach((r, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'record-card';
+                    div.innerHTML = `
+                        <strong>${r.patientName}</strong> (ID: ${r.patientId || 'Hidden'})<br>
+                        DOB: ${r.patientDob} | Check-in: ${r.checkInDate || 'N/A'}<br>
+                        <button onclick="selectForUpdate(${index})">Select to Update</button>
+                    `;
+                    resultsDiv.appendChild(div);
+                });
+            } else {
+                document.getElementById('main-status').innerText = '✗ Search Failed';
+                document.getElementById('main-status').className = 'status error';
+            }
+        } catch (e) {
+            document.getElementById('main-status').innerText = '✗ Error: ' + e.message;
+            document.getElementById('main-status').className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Find Record';
+        }
+    }
+
+    function selectForUpdate(index) {
+        const r = currentUpdateRecords[index];
+        document.getElementById('update-form').classList.remove('hidden');
+        document.getElementById('upd-results').innerHTML = ''; 
+
+        document.getElementById('upd-index').value = r.recordIndex;
+        document.getElementById('upd-id').value = r.patientId || ''; 
+        document.getElementById('upd-name').value = r.patientName;
+        document.getElementById('upd-dob').value = r.patientDob;
+        document.getElementById('upd-sym').value = r.symptoms;
+        document.getElementById('upd-diag').value = r.diagnosis;
+    }
+
+    async function submitUpdate() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Updating...<span class="spinner"></span>';
+        showLoading(true);
+        
+        const formData = new FormData();
+        formData.append('recordIndex', document.getElementById('upd-index').value);
+        formData.append('patientId', document.getElementById('upd-id').value);
+        formData.append('patientName', document.getElementById('upd-name').value);
+        formData.append('patientDob', document.getElementById('upd-dob').value);
+        formData.append('symptoms', document.getElementById('upd-sym').value);
+        formData.append('diagnosis', document.getElementById('upd-diag').value);
+
+        const fileInput = document.getElementById('upd-files');
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append('files', fileInput.files[i]);
+        }
+
+        const token = localStorage.getItem('token');
+        const status = document.getElementById('main-status');
+        
+        try {
+            const res = await fetch(`${API_URL}/update`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token },
+                body: formData
+            });
+
+            if (res.ok) {
+                status.innerText = '✓ Update Successful';
+                status.className = 'status success';
+                document.getElementById('update-form').classList.add('hidden');
+                document.getElementById('upd-results').innerHTML = '';
+            } else {
+                status.innerText = '✗ Update Failed';
+                status.className = 'status error';
+            }
+        } catch (e) {
+            status.innerText = '✗ Error: ' + e.message;
+            status.className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Update';
+        }
+    }
+    function showLoading(show) {
+        const loadingBar = document.getElementById('loading-bar');
+        if (show) {
+            loadingBar.classList.add('active');
+        } else {
+            loadingBar.classList.remove('active');
+        }
+    }
+</script>
+
+</body>
+</html>
