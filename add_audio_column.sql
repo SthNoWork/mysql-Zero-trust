@@ -4,7 +4,6 @@
 
 USE hospital;
 
--- Check if column exists, and add it if it doesn't
 SET @col_exists = 0;
 SELECT COUNT(*) INTO @col_exists 
 FROM information_schema.COLUMNS 

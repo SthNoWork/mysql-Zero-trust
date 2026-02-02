@@ -21,6 +21,13 @@
         .status { text-align: center; margin-top: 10px; font-weight: bold; }
         .success { color: green; }
         .error { color: red; }
+        .loading-bar { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden; margin: 10px 0; display: none; }
+        .loading-bar.active { display: block; }
+        .loading-bar-fill { height: 100%; background: linear-gradient(90deg, #007bff, #0056b3); animation: loading 1.5s ease-in-out infinite; }
+        @keyframes loading { 0% { width: 0%; } 50% { width: 70%; } 100% { width: 100%; } }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; opacity: 0.6; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ffffff; border-top: 2px solid transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-left: 5px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -47,6 +54,8 @@
         <button onclick="showSection('update')">Update Record</button>
         <button onclick="logout()" style="background-color: #dc3545;">Logout</button>
     </div>
+    <p class="status" id="main-status"></p>
+    <div class="loading-bar" id="loading-bar"><div class="loading-bar-fill"></div></div>
 
     <!-- INSERT SECTION -->
     <div id="insert-section" class="hidden">
@@ -205,6 +214,11 @@
     }
 
     async function insertRecord() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Submitting...<span class="spinner"></span>';
+        showLoading(true);
+        
         const formData = new FormData();
         formData.append('patientId', document.getElementById('ins-id').value);
         formData.append('patientName', document.getElementById('ins-name').value);
@@ -218,34 +232,49 @@
         }
 
         const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/insert`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token },
-            body: formData // Fetch automatically sets Content-Type to multipart/form-data
-        });
-
         const status = document.getElementById('main-status');
-        if (res.ok) {
-            status.innerText = 'Record Inserted Successfully!';
-            status.className = 'status success';
-            // Clear form
-            document.querySelectorAll('#insert-section input, #insert-section textarea').forEach(i => i.value = '');
-        } else {
-            status.innerText = 'Insert Failed: ' + await res.text();
+        
+        try {
+            const res = await fetch(`${API_URL}/insert`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token },
+                body: formData
+            });
+
+            if (res.ok) {
+                status.innerText = '✓ Record Inserted Successfully!';
+                status.className = 'status success';
+                document.querySelectorAll('#insert-section input, #insert-section textarea').forEach(i => i.value = '');
+            } else {
+                status.innerText = '✗ Insert Failed: ' + await res.text();
+                status.className = 'status error';
+            }
+        } catch (e) {
+            status.innerText = '✗ Error: ' + e.message;
             status.className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Record';
         }
     }
 
     async function searchRecord() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Searching...<span class="spinner"></span>';
+        showLoading(true);
+        
         const type = document.getElementById('search-type').value;
         const query = document.getElementById('search-query').value;
         const token = localStorage.getItem('token');
-
-        const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
         const resultsDiv = document.getElementById('results');
         resultsDiv.innerHTML = '';
+
+        try {
+            const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
 
         if (res.ok) {
             const records = await res.json();
@@ -268,7 +297,16 @@
                 resultsDiv.appendChild(div);
             });
         } else {
-            document.getElementById('main-status').innerText = 'Search Failed';
+            document.getElementById('main-status').innerText = '✗ Search Failed';
+            document.getElementById('main-status').className = 'status error';
+        }
+        } catch (e) {
+            document.getElementById('main-status').innerText = '✗ Error: ' + e.message;
+            document.getElementById('main-status').className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Search';
         }
     }
 
@@ -324,38 +362,51 @@
     let currentUpdateRecords = [];
 
     async function searchForUpdate() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Searching...<span class="spinner"></span>';
+        showLoading(true);
+        
         const type = document.getElementById('upd-search-type').value;
         const query = document.getElementById('upd-search-query').value;
         const token = localStorage.getItem('token');
-        
-        const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
-            headers: { 'Authorization': 'Bearer ' + token }
-        }); 
-        
         const resultsDiv = document.getElementById('upd-results');
         resultsDiv.innerHTML = '';
         document.getElementById('update-form').classList.add('hidden');
+        
+        try {
+            const res = await fetch(`${API_URL}/search?type=${type}&query=${encodeURIComponent(query)}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            }); 
 
-        if (res.ok) {
-            currentUpdateRecords = await res.json();
-            if (currentUpdateRecords.length === 0) {
-                resultsDiv.innerHTML = '<p>No records found.</p>';
-                return;
+            if (res.ok) {
+                currentUpdateRecords = await res.json();
+                if (currentUpdateRecords.length === 0) {
+                    resultsDiv.innerHTML = '<p>No records found.</p>';
+                    return;
+                }
+
+                currentUpdateRecords.forEach((r, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'record-card';
+                    div.innerHTML = `
+                        <strong>${r.patientName}</strong> (ID: ${r.patientId || 'Hidden'})<br>
+                        DOB: ${r.patientDob} | Check-in: ${r.checkInDate || 'N/A'}<br>
+                        <button onclick="selectForUpdate(${index})">Select to Update</button>
+                    `;
+                    resultsDiv.appendChild(div);
+                });
+            } else {
+                document.getElementById('main-status').innerText = '✗ Search Failed';
+                document.getElementById('main-status').className = 'status error';
             }
-
-            currentUpdateRecords.forEach((r, index) => {
-                const div = document.createElement('div');
-                div.className = 'record-card';
-                div.innerHTML = `
-                    <strong>${r.patientName}</strong> (ID: ${r.patientId || 'Hidden'})<br>
-                    DOB: ${r.patientDob} | Check-in: ${r.checkInDate || 'N/A'}<br>
-                    <button onclick="selectForUpdate(${index})">Select to Update</button>
-                `;
-                resultsDiv.appendChild(div);
-            });
-        } else {
-            document.getElementById('main-status').innerText = 'Search Failed';
+        } catch (e) {
+            document.getElementById('main-status').innerText = '✗ Error: ' + e.message;
             document.getElementById('main-status').className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Find Record';
         }
     }
 
@@ -373,6 +424,11 @@
     }
 
     async function submitUpdate() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = 'Updating...<span class="spinner"></span>';
+        showLoading(true);
+        
         const formData = new FormData();
         formData.append('recordIndex', document.getElementById('upd-index').value);
         formData.append('patientId', document.getElementById('upd-id').value);
@@ -387,21 +443,39 @@
         }
 
         const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/update`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token },
-            body: formData
-        });
-
         const status = document.getElementById('main-status');
-        if (res.ok) {
-            status.innerText = 'Update Successful';
-            status.className = 'status success';
-            document.getElementById('update-form').classList.add('hidden');
-            document.getElementById('upd-results').innerHTML = '';
-        } else {
-            status.innerText = 'Update Failed';
+        
+        try {
+            const res = await fetch(`${API_URL}/update`, {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token },
+                body: formData
+            });
+
+            if (res.ok) {
+                status.innerText = '✓ Update Successful';
+                status.className = 'status success';
+                document.getElementById('update-form').classList.add('hidden');
+                document.getElementById('upd-results').innerHTML = '';
+            } else {
+                status.innerText = '✗ Update Failed';
+                status.className = 'status error';
+            }
+        } catch (e) {
+            status.innerText = '✗ Error: ' + e.message;
             status.className = 'status error';
+        } finally {
+            showLoading(false);
+            btn.disabled = false;
+            btn.innerHTML = 'Submit Update';
+        }
+    }
+    function showLoading(show) {
+        const loadingBar = document.getElementById('loading-bar');
+        if (show) {
+            loadingBar.classList.add('active');
+        } else {
+            loadingBar.classList.remove('active');
         }
     }
 </script>
