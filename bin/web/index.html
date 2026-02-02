@@ -56,7 +56,7 @@
         <div class="form-group"><label>DOB (yyyy-mm-dd)</label><input type="text" id="ins-dob"></div>
         <div class="form-group"><label>Symptoms</label><textarea id="ins-sym"></textarea></div>
         <div class="form-group"><label>Diagnosis</label><textarea id="ins-diag"></textarea></div>
-        <div class="form-group"><label>Media Files (Images/Videos)</label><input type="file" id="ins-files" multiple></div>
+        <div class="form-group"><label>Media Files (Images/Videos/Audio)</label><input type="file" id="ins-files" multiple></div>
         <button onclick="insertRecord()">Submit Record</button>
     </div>
 
@@ -296,6 +296,12 @@
                     mediaHtml += '<br><strong>Videos:</strong><br>';
                     media.videos.forEach(vid => {
                         mediaHtml += `<video controls src="data:video/mp4;base64,${vid}" style="max-width:100%; margin-top:10px; margin-right: 10px;"></video>`;
+                    });
+                }
+                if (media.audios && media.audios.length > 0) {
+                    mediaHtml += '<br><strong>Audio Files:</strong><br>';
+                    media.audios.forEach(aud => {
+                        mediaHtml += `<audio controls src="data:audio/mpeg;base64,${aud}" style="width:100%; margin-top:10px; margin-right: 10px;"></audio>`;
                     });
                 }
                 

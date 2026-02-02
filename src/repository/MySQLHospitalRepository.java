@@ -15,9 +15,9 @@ public class MySQLHospitalRepository implements HospitalRepository {
         String sql = """
             INSERT INTO Hospital_Records
             (patient_id_hash, patient_name, patient_dob, check_in_date, doctor_name, nurse_name,
-             encrypted_symptoms, encrypted_diagnosis, encrypted_images, encrypted_videos,
+             encrypted_symptoms, encrypted_diagnosis, encrypted_images, encrypted_videos, encrypted_audios,
              doctor_encrypted_aes_key, nurse_encrypted_aes_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
         Connection conn = DBConnection.getConnection();
@@ -33,8 +33,9 @@ public class MySQLHospitalRepository implements HospitalRepository {
             stmt.setBytes(8, record.getEncryptedDiagnosis());
             stmt.setBytes(9, record.getEncryptedImages());
             stmt.setBytes(10, record.getEncryptedVideos());
-            stmt.setBytes(11, record.getDoctorEncryptedAesKey());
-            stmt.setBytes(12, record.getNurseEncryptedAesKey());
+            stmt.setBytes(11, record.getEncryptedAudios());
+            stmt.setBytes(12, record.getDoctorEncryptedAesKey());
+            stmt.setBytes(13, record.getNurseEncryptedAesKey());
 
             stmt.executeUpdate();
         }
@@ -53,6 +54,7 @@ public class MySQLHospitalRepository implements HospitalRepository {
                 encrypted_diagnosis = ?,
                 encrypted_images = ?,
                 encrypted_videos = ?,
+                encrypted_audios = ?,
                 doctor_encrypted_aes_key = ?,
                 nurse_encrypted_aes_key = ?
             WHERE record_index = ?
@@ -70,9 +72,10 @@ public class MySQLHospitalRepository implements HospitalRepository {
             stmt.setBytes(7, record.getEncryptedDiagnosis());
             stmt.setBytes(8, record.getEncryptedImages());
             stmt.setBytes(9, record.getEncryptedVideos());
-            stmt.setBytes(10, record.getDoctorEncryptedAesKey());
-            stmt.setBytes(11, record.getNurseEncryptedAesKey());
-            stmt.setInt(12, record.getRecordIndex());
+            stmt.setBytes(10, record.getEncryptedAudios());
+            stmt.setBytes(11, record.getDoctorEncryptedAesKey());
+            stmt.setBytes(12, record.getNurseEncryptedAesKey());
+            stmt.setInt(13, record.getRecordIndex());
 
             stmt.executeUpdate();
         }
@@ -148,10 +151,12 @@ public class MySQLHospitalRepository implements HospitalRepository {
         try {
             record.setEncryptedImages(rs.getBytes("encrypted_images"));
             record.setEncryptedVideos(rs.getBytes("encrypted_videos"));
+            record.setEncryptedAudios(rs.getBytes("encrypted_audios"));
         } catch (SQLException e) {
             // Columns not present in this query (search optimization)
             record.setEncryptedImages(null);
             record.setEncryptedVideos(null);
+            record.setEncryptedAudios(null);
         }
 
         record.setDoctorEncryptedAesKey(rs.getBytes("doctor_encrypted_aes_key"));

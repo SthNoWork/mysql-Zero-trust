@@ -18,6 +18,7 @@ public class PatientRecord {
     private byte[] encryptedDiagnosis;
     private byte[] encryptedImages;
     private byte[] encryptedVideos;
+    private byte[] encryptedAudios;
     private byte[] doctorEncryptedAesKey;
     private byte[] nurseEncryptedAesKey;
 
@@ -57,6 +58,9 @@ public class PatientRecord {
 
     public byte[] getEncryptedVideos() { return encryptedVideos; }
     public void setEncryptedVideos(byte[] encryptedVideos) { this.encryptedVideos = encryptedVideos; }
+
+    public byte[] getEncryptedAudios() { return encryptedAudios; }
+    public void setEncryptedAudios(byte[] encryptedAudios) { this.encryptedAudios = encryptedAudios; }
 
     public byte[] getDoctorEncryptedAesKey() { return doctorEncryptedAesKey; }
     public void setDoctorEncryptedAesKey(byte[] doctorEncryptedAesKey) { this.doctorEncryptedAesKey = doctorEncryptedAesKey; }

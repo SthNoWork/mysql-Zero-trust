@@ -40,6 +40,7 @@ public class PatientService {
         MediaService.MediaResult mediaResult = mediaService.processMediaFiles(doctorEncryptor, aesKey, mediaFiles);
         record.setEncryptedImages(mediaResult.imageBytes);
         record.setEncryptedVideos(mediaResult.videoBytes);
+        record.setEncryptedAudios(mediaResult.audioBytes);
 
         record.setDoctorEncryptedAesKey(doctorEncryptor.encryptAESKeyWithRSA(aesKey));
         record.setNurseEncryptedAesKey(nurseEncryptor.encryptAESKeyWithRSA(aesKey));
@@ -104,6 +105,7 @@ public class PatientService {
         Map<String, List<String>> media = new HashMap<>();
         media.put("images", new java.util.ArrayList<>());
         media.put("videos", new java.util.ArrayList<>());
+        media.put("audios", new java.util.ArrayList<>());
 
         Map<String, byte[]> images = mediaService.decryptMediaToMap(record.getEncryptedImages(), decryptor, aesKey);
         for (byte[] img : images.values()) {
@@ -113,6 +115,11 @@ public class PatientService {
         Map<String, byte[]> videos = mediaService.decryptMediaToMap(record.getEncryptedVideos(), decryptor, aesKey);
         for (byte[] vid : videos.values()) {
             media.get("videos").add(Base64.getEncoder().encodeToString(vid));
+        }
+
+        Map<String, byte[]> audios = mediaService.decryptMediaToMap(record.getEncryptedAudios(), decryptor, aesKey);
+        for (byte[] aud : audios.values()) {
+            media.get("audios").add(Base64.getEncoder().encodeToString(aud));
         }
 
         return media;

@@ -20,6 +20,7 @@ public class MediaService {
     public static class MediaResult {
         public byte[] imageBytes = new byte[0];
         public byte[] videoBytes = new byte[0];
+        public byte[] audioBytes = new byte[0];
         public List<Path> processedFiles = new ArrayList<>();
     }
 
@@ -27,15 +28,18 @@ public class MediaService {
         MediaResult result = new MediaResult();
         List<Path> images = new ArrayList<>();
         List<Path> videos = new ArrayList<>();
+        List<Path> audios = new ArrayList<>();
 
         try {
             for (Path file : filesToProcess) {
                 if (!Files.exists(file)) continue;
                 String fileName = file.getFileName().toString().toLowerCase();
-                if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg") || fileName.endsWith(".png")) {
+                if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg") || fileName.endsWith(".png") || fileName.endsWith(".webp")) {
                     images.add(file);
-                } else if (fileName.endsWith(".mp4") || fileName.endsWith(".avi")) {
+                } else if (fileName.endsWith(".mp4") || fileName.endsWith(".avi") || fileName.endsWith(".webm")) {
                     videos.add(file);
+                } else if (fileName.endsWith(".mp3") || fileName.endsWith(".wav") || fileName.endsWith(".m4a") || fileName.endsWith(".ogg")) {
+                    audios.add(file);
                 }
                 result.processedFiles.add(file);
             }
@@ -48,6 +52,11 @@ public class MediaService {
             if (!videos.isEmpty()) {
                 byte[] zippedVideos = zipFiles(videos);
                 result.videoBytes = encryptor.encryptBytesWithAES(zippedVideos, aesKey);
+            }
+            
+            if (!audios.isEmpty()) {
+                byte[] zippedAudios = zipFiles(audios);
+                result.audioBytes = encryptor.encryptBytesWithAES(zippedAudios, aesKey);
             }
 
         } catch (Exception e) {
