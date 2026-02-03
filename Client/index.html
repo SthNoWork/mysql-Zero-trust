@@ -42,6 +42,7 @@
         <button onclick="showSection('insert')">➕ Insert</button>
         <button onclick="showSection('search')">🔍 Search</button>
         <button onclick="showSection('update')">✏️ Update</button>
+        <button onclick="showSection('config')">⚙️ Config</button>
         <button onclick="logout()" style="background:#dc3545">Logout</button>
     </div>
     <p class="status" id="main-status"></p>
@@ -106,6 +107,32 @@
             <button onclick="submitUpdate()">💾 Save Changes</button>
         </div>
     </div>
+
+    <!-- CONFIG -->
+    <div id="config-section" class="hidden">
+        <h2>⚙️ Configuration — Keys</h2>
+        <p>Upload one private key (PEM) and one or more public keys (PEM). Keys are stored locally in your browser.</p>
+        <div class="form-group">
+            <label>Private Key (one)</label>
+            <input type="file" id="priv-key-file" accept=".pem,.key" />
+            <div id="priv-key-info" style="margin-top:8px"></div>
+            <button onclick="clearPrivateKey()" style="width:auto;margin-top:8px;background:#ffc107">Clear Private Key</button>
+        </div>
+
+        <div class="form-group">
+            <label>Public Keys (multiple)</label>
+            <input type="file" id="pub-keys-file" accept=".pem,.crt,.key" multiple />
+            <div id="pub-keys-list" style="margin-top:8px"></div>
+            <button onclick="clearPublicKeys()" style="width:auto;margin-top:8px;background:#ffc107">Clear Public Keys</button>
+        </div>
+
+        <div class="form-group">
+            <label>Remember Key Directory (optional)</label>
+            <button onclick="pickKeyDirectory()" style="width:auto;background:#17a2b8">Pick Directory (if supported)</button>
+            <div id="key-dir-info" style="margin-top:8px"></div>
+            <p style="font-size:0.9em;color:#666">Note: directory persistence requires browser support for the File System Access API; otherwise only key contents are stored locally.</p>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -152,7 +179,12 @@ function logout() {
 }
 
 function showSection(id) {
-    ['insert','search','update'].forEach(s => document.getElementById(s+'-section').classList.add('hidden'));
+    ['insert','search','update','config'].forEach(s => document.getElementById(s+'-section').classList.add('hidden'));
+    // prevent entering insert/update without keys
+    if ((id === 'insert' || id === 'update') && !ensureKeysOrPrompt()) {
+        showSection('config');
+        return;
+    }
     document.getElementById(id+'-section').classList.remove('hidden');
     document.getElementById('main-status').innerText = '';
     document.getElementById('results').innerHTML = '';
@@ -175,29 +207,63 @@ async function insertRecord() {
     const status = document.getElementById('main-status');
     
     try {
+        if (!ensureKeysOrPrompt()) return;
+        // Gather files
         const files = document.getElementById('ins-files').files;
         let images = [], videos = [], audios = [];
-        
         for (const f of files) {
             const b64 = await toBase64(f);
             if (f.type.startsWith('image')) images.push(b64);
             else if (f.type.startsWith('video')) videos.push(b64);
             else if (f.type.startsWith('audio')) audios.push(b64);
         }
-        
+
+        // generate AES-256-GCM key and iv
+        const aesKey = await crypto.subtle.generateKey({name: 'AES-GCM', length: 256}, true, ['encrypt','decrypt']);
+        const exportedAes = new Uint8Array(await crypto.subtle.exportKey('raw', aesKey));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        // encrypt fields
+        const encSymptoms = await aesEncryptString(aesKey, iv, document.getElementById('ins-sym').value || '');
+        const encDiagnosis = await aesEncryptString(aesKey, iv, document.getElementById('ins-diag').value || '');
+
+        // encrypt files arrays as JSON strings
+        const encImages = images.length ? await aesEncryptString(aesKey, iv, JSON.stringify(images)) : null;
+        const encVideos = videos.length ? await aesEncryptString(aesKey, iv, JSON.stringify(videos)) : null;
+        const encAudios = audios.length ? await aesEncryptString(aesKey, iv, JSON.stringify(audios)) : null;
+
+        // encrypt AES key with up to two uploaded public keys (doctor = slot0, nurse = slot1)
+        let doctorEncrypted = null, nurseEncrypted = null;
+        const pubs = JSON.parse(localStorage.getItem('pubKeys') || '[]');
+        if (!pubs || pubs.length < 1) throw new Error('No public keys configured. Please add at least one public key in Config.');
+        try {
+            const p0 = pubs[0];
+            const pubKey = await importRsaPublicKey(p0.content);
+            const wrapped = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey, exportedAes);
+            doctorEncrypted = arrayBufferToBase64(wrapped);
+        } catch(e) { throw new Error('Failed to import/wrap with public key 0: ' + e.message); }
+        try {
+            const p1 = pubs[1] || pubs[0];
+            const pubKey2 = await importRsaPublicKey(p1.content);
+            const wrapped2 = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey2, exportedAes);
+            nurseEncrypted = arrayBufferToBase64(wrapped2);
+        } catch(e) { throw new Error('Failed to import/wrap with public key 1: ' + e.message); }
+
         const rec = {
             patientId: document.getElementById('ins-id').value,
             patientName: document.getElementById('ins-name').value,
             patientDob: document.getElementById('ins-dob').value || null,
             doctorName: document.getElementById('ins-doctor').value,
             nurseName: document.getElementById('ins-nurse').value,
-            encryptedSymptoms: btoa(document.getElementById('ins-sym').value),
-            encryptedDiagnosis: btoa(document.getElementById('ins-diag').value),
-            encryptedImages: images.length ? btoa(JSON.stringify(images)) : null,
-            encryptedVideos: videos.length ? btoa(JSON.stringify(videos)) : null,
-            encryptedAudios: audios.length ? btoa(JSON.stringify(audios)) : null,
-            doctorEncryptedAesKey: btoa('demo-key'),
-            nurseEncryptedAesKey: btoa('demo-key')
+            encryptedSymptoms: encSymptoms ? encSymptoms : null,
+            encryptedDiagnosis: encDiagnosis ? encDiagnosis : null,
+            encryptedImages: encImages ? encImages : null,
+            encryptedVideos: encVideos ? encVideos : null,
+            encryptedAudios: encAudios ? encAudios : null,
+            // include iv alongside encrypted payloads so decryption can use same iv
+            aesIv: arrayBufferToBase64(iv.buffer),
+            doctorEncryptedAesKey: doctorEncrypted,
+            nurseEncryptedAesKey: nurseEncrypted
         };
         
         const res = await fetch(API + '/records', {
@@ -247,19 +313,40 @@ function displayRecords(records, containerId) {
         div.innerHTML = '<p>No records found.</p>';
         return;
     }
-    
-    div.innerHTML = records.map(r => `
-        <div class="record-card">
+
+    // store last search so Edit can open update form
+    window.lastSearchResults = records;
+
+    // render cards; we'll attempt to decrypt fields when private key is available
+    div.innerHTML = '';
+    records.forEach((r, i) => {
+        const card = document.createElement('div');
+        card.className = 'record-card';
+        card.innerHTML = `
             <strong>${r.patientName || 'N/A'}</strong> (Index: ${r.recordIndex})<br>
             DOB: ${r.patientDob || 'N/A'} | Check-in: ${r.checkInDate || 'N/A'}<br>
             Doctor: ${r.doctorName || 'N/A'} | Nurse: ${r.nurseName || 'N/A'}<br>
             <hr>
-            <em>Symptoms:</em> ${r.encryptedSymptoms ? atob(r.encryptedSymptoms) : 'N/A'}<br>
-            <em>Diagnosis:</em> ${r.encryptedDiagnosis ? atob(r.encryptedDiagnosis) : 'N/A'}
-            <br><button onclick="loadMedia(this, '${r.encryptedImages}', '${r.encryptedVideos}', '${r.encryptedAudios}')" style="width:auto;margin-top:10px;background:#6c757d">Load Media</button>
+            <div class="fields-${i}"><em>Loading...</em></div>
+            <br>
+            <button onclick="loadMedia(this, '${r.encryptedImages}', '${r.encryptedVideos}', '${r.encryptedAudios}')" style="width:auto;margin-top:10px;background:#6c757d">Load Media</button>
+            <button onclick="openUpdateFromResults(${i})" style="width:auto;margin-top:10px;background:#007bff;margin-left:8px">Edit</button>
             <div class="media-box"></div>
-        </div>
-    `).join('');
+        `;
+        div.appendChild(card);
+
+        // attempt decryption and then populate fields
+        (async () => {
+            const fld = card.querySelector('.fields-' + i);
+            try {
+                const s = await tryDecryptField(r.encryptedSymptoms, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv);
+                const d = await tryDecryptField(r.encryptedDiagnosis, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv);
+                fld.innerHTML = `<em>Symptoms:</em> ${s || 'N/A'}<br><em>Diagnosis:</em> ${d || 'N/A'}`;
+            } catch(e) {
+                fld.innerHTML = `<em>Symptoms:</em> ${r.encryptedSymptoms ? '[encrypted]' : 'N/A'}<br><em>Diagnosis:</em> ${r.encryptedDiagnosis ? '[encrypted]' : 'N/A'}`;
+            }
+        })();
+    });
 }
 
 function loadMedia(btn, images, videos, audios) {
@@ -283,6 +370,90 @@ function loadMedia(btn, images, videos, audios) {
     
     container.innerHTML = html || '<em>No media</em>';
     btn.style.display = 'none';
+}
+
+// Open update form from search results
+function openUpdateFromResults(i) {
+    const r = (window.lastSearchResults || [])[i];
+    if (!r) return alert('Record not found');
+    document.getElementById('update-form').classList.remove('hidden');
+    document.getElementById('upd-index').value = r.recordIndex;
+    document.getElementById('upd-name').value = r.patientName || '';
+    document.getElementById('upd-dob').value = r.patientDob || '';
+    document.getElementById('upd-doctor').value = r.doctorName || '';
+    document.getElementById('upd-nurse').value = r.nurseName || '';
+    // attempt decrypt
+    tryDecryptField(r.encryptedSymptoms, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv).then(t => document.getElementById('upd-sym').value = t || '')
+        .catch(_ => document.getElementById('upd-sym').value = r.encryptedSymptoms ? '[encrypted]' : '');
+    tryDecryptField(r.encryptedDiagnosis, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv).then(t => document.getElementById('upd-diag').value = t || '')
+        .catch(_ => document.getElementById('upd-diag').value = r.encryptedDiagnosis ? '[encrypted]' : '');
+}
+
+// --- Crypto helpers ---
+function pemToBinary(pem) {
+    const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+    return base64ToArrayBuffer(b64);
+}
+
+function base64ToArrayBuffer(b64) { const binary = atob(b64); const len = binary.length; const bytes = new Uint8Array(len); for (let i=0;i<len;i++) bytes[i]=binary.charCodeAt(i); return bytes.buffer; }
+function arrayBufferToBase64(buf) { const bytes = new Uint8Array(buf); let binary=''; for (let i=0;i<bytes.byteLength;i++) binary += String.fromCharCode(bytes[i]); return btoa(binary); }
+
+function randomBase64(len) {
+    const b = new Uint8Array(len);
+    crypto.getRandomValues(b);
+    let s = '';
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s);
+}
+
+async function importRsaPublicKey(pem) {
+    const bin = pemToBinary(pem);
+    return await crypto.subtle.importKey('spki', bin, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['encrypt']);
+}
+
+async function importRsaPrivateKey(pem) {
+    const bin = pemToBinary(pem);
+    return await crypto.subtle.importKey('pkcs8', bin, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['decrypt']);
+}
+
+async function aesEncryptString(key, iv, plaintext) {
+    const enc = new TextEncoder().encode(plaintext);
+    const ct = await crypto.subtle.encrypt({name:'AES-GCM', iv: iv}, key, enc);
+    return arrayBufferToBase64(ct);
+}
+
+async function aesDecryptString(key, ivB64, cipherB64) {
+    if (!cipherB64) return null;
+    const iv = base64ToArrayBuffer(ivB64);
+    const ct = base64ToArrayBuffer(cipherB64);
+    const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv: new Uint8Array(iv)}, key, ct);
+    return new TextDecoder().decode(pt);
+}
+
+async function tryDecryptField(cipherB64, docWrapped, nurseWrapped, ivB64) {
+    if (!cipherB64) return null;
+    const privPem = localStorage.getItem('privKeyPem');
+    if (!privPem) throw new Error('no private key');
+    try {
+        const priv = await importRsaPrivateKey(privPem);
+        // decide which wrapped key to use based on user role
+        const role = (user && user.role) ? user.role.toLowerCase() : null;
+        let wrapped = null;
+        if (role === 'doctor' && docWrapped) wrapped = docWrapped;
+        else if (role === 'nurse' && nurseWrapped) wrapped = nurseWrapped;
+        else wrapped = docWrapped || nurseWrapped;
+        // if wrapped looks like demo btoa('demo-key'), it won't decrypt
+        if (!wrapped) throw new Error('no wrapped key');
+        // if wrapped is a simple btoa demo-key, throw
+        try {
+            const wrappedBuf = base64ToArrayBuffer(wrapped);
+            const aesRaw = await crypto.subtle.decrypt({name:'RSA-OAEP'}, priv, wrappedBuf);
+            const aesKey = await crypto.subtle.importKey('raw', aesRaw, {name:'AES-GCM'}, false, ['decrypt']);
+            return await aesDecryptString(aesKey, ivB64, cipherB64);
+        } catch(e) { throw e; }
+    } catch(e) {
+        throw e;
+    }
 }
 
 let updateRecords = [];
@@ -319,8 +490,10 @@ function selectForUpdate(i) {
     document.getElementById('upd-dob').value = r.patientDob || '';
     document.getElementById('upd-doctor').value = r.doctorName || '';
     document.getElementById('upd-nurse').value = r.nurseName || '';
-    document.getElementById('upd-sym').value = r.encryptedSymptoms ? atob(r.encryptedSymptoms) : '';
-    document.getElementById('upd-diag').value = r.encryptedDiagnosis ? atob(r.encryptedDiagnosis) : '';
+    tryDecryptField(r.encryptedSymptoms, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv).then(t => document.getElementById('upd-sym').value = t || '')
+        .catch(_ => document.getElementById('upd-sym').value = r.encryptedSymptoms ? '[encrypted]' : '');
+    tryDecryptField(r.encryptedDiagnosis, r.doctorEncryptedAesKey, r.nurseEncryptedAesKey, r.aesIv).then(t => document.getElementById('upd-diag').value = t || '')
+        .catch(_ => document.getElementById('upd-diag').value = r.encryptedDiagnosis ? '[encrypted]' : '');
 }
 
 async function submitUpdate() {
@@ -330,28 +503,56 @@ async function submitUpdate() {
     const status = document.getElementById('main-status');
     
     try {
+        if (!ensureKeysOrPrompt()) return;
         const files = document.getElementById('upd-files').files;
         let images = [], videos = [], audios = [];
-        
         for (const f of files) {
             const b64 = await toBase64(f);
             if (f.type.startsWith('image')) images.push(b64);
             else if (f.type.startsWith('video')) videos.push(b64);
             else if (f.type.startsWith('audio')) audios.push(b64);
         }
-        
+
+        // AES key + iv
+        const aesKey = await crypto.subtle.generateKey({name: 'AES-GCM', length: 256}, true, ['encrypt','decrypt']);
+        const exportedAes = new Uint8Array(await crypto.subtle.exportKey('raw', aesKey));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        const encSymptoms = await aesEncryptString(aesKey, iv, document.getElementById('upd-sym').value || '');
+        const encDiagnosis = await aesEncryptString(aesKey, iv, document.getElementById('upd-diag').value || '');
+        const encImages = images.length ? await aesEncryptString(aesKey, iv, JSON.stringify(images)) : null;
+        const encVideos = videos.length ? await aesEncryptString(aesKey, iv, JSON.stringify(videos)) : null;
+        const encAudios = audios.length ? await aesEncryptString(aesKey, iv, JSON.stringify(audios)) : null;
+
+        let doctorEncrypted = null, nurseEncrypted = null;
+        const pubs = JSON.parse(localStorage.getItem('pubKeys') || '[]');
+        if (!pubs || pubs.length < 1) throw new Error('No public keys configured. Please add at least one public key in Config.');
+        try {
+            const p0 = pubs[0];
+            const pubKey = await importRsaPublicKey(p0.content);
+            const wrapped = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey, exportedAes);
+            doctorEncrypted = arrayBufferToBase64(wrapped);
+        } catch(e) { throw new Error('Failed to import/wrap with public key 0: ' + e.message); }
+        try {
+            const p1 = pubs[1] || pubs[0];
+            const pubKey2 = await importRsaPublicKey(p1.content);
+            const wrapped2 = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey2, exportedAes);
+            nurseEncrypted = arrayBufferToBase64(wrapped2);
+        } catch(e) { throw new Error('Failed to import/wrap with public key 1: ' + e.message); }
+
         const rec = {
             patientName: document.getElementById('upd-name').value,
             patientDob: document.getElementById('upd-dob').value || null,
             doctorName: document.getElementById('upd-doctor').value,
             nurseName: document.getElementById('upd-nurse').value,
-            encryptedSymptoms: btoa(document.getElementById('upd-sym').value),
-            encryptedDiagnosis: btoa(document.getElementById('upd-diag').value),
-            encryptedImages: images.length ? btoa(JSON.stringify(images)) : null,
-            encryptedVideos: videos.length ? btoa(JSON.stringify(videos)) : null,
-            encryptedAudios: audios.length ? btoa(JSON.stringify(audios)) : null,
-            doctorEncryptedAesKey: btoa('demo-key'),
-            nurseEncryptedAesKey: btoa('demo-key')
+            encryptedSymptoms: encSymptoms ? encSymptoms : null,
+            encryptedDiagnosis: encDiagnosis ? encDiagnosis : null,
+            encryptedImages: encImages ? encImages : null,
+            encryptedVideos: encVideos ? encVideos : null,
+            encryptedAudios: encAudios ? encAudios : null,
+            aesIv: arrayBufferToBase64(iv.buffer),
+            doctorEncryptedAesKey: doctorEncrypted,
+            nurseEncryptedAesKey: nurseEncrypted
         };
         
         const res = await fetch(API + '/records/' + document.getElementById('upd-index').value, {
@@ -375,6 +576,107 @@ async function submitUpdate() {
         btn.innerHTML = '💾 Save Changes';
     }
 }
+
+// --- Key config storage & UI ---
+async function initConfig() {
+    // wire inputs
+    document.getElementById('priv-key-file').addEventListener('change', handlePrivKeyFile);
+    document.getElementById('pub-keys-file').addEventListener('change', handlePubKeysFiles);
+    // load stored keys
+    try { displayStoredKeys(); await loadStoredDirectoryHandle(); } catch(e) { console.log('initConfig:', e); }
+}
+
+async function handlePrivKeyFile(e) {
+    const f = e.target.files[0];
+    if (!f) return;
+    const txt = await f.text();
+    localStorage.setItem('privKeyPem', txt);
+    localStorage.setItem('privKeyName', f.name);
+    displayStoredKeys();
+}
+
+async function handlePubKeysFiles(e) {
+    const files = Array.from(e.target.files || []);
+    const arr = [];
+    for (const f of files) { arr.push({name: f.name, content: await f.text()}); }
+    localStorage.setItem('pubKeys', JSON.stringify(arr));
+    displayStoredKeys();
+}
+
+function displayStoredKeys() {
+    const pk = localStorage.getItem('privKeyPem');
+    const pkName = localStorage.getItem('privKeyName') || '';
+    document.getElementById('priv-key-info').innerText = pk ? `Saved: ${pkName} (${pk.length} bytes)` : 'No private key saved.';
+
+    const pubs = JSON.parse(localStorage.getItem('pubKeys') || '[]');
+    const list = pubs.length ? pubs.map(p => `<div>${p.name} (${p.content.length} bytes)</div>`).join('') : '<div>No public keys saved.</div>';
+    document.getElementById('pub-keys-list').innerHTML = list;
+}
+
+function ensureKeysOrPrompt() {
+    const priv = localStorage.getItem('privKeyPem');
+    const pubs = JSON.parse(localStorage.getItem('pubKeys') || '[]');
+    if (!priv) {
+        alert('A private key is required. Please upload your private key in Config.');
+        showSection('config');
+        return false;
+    }
+    if (!pubs || pubs.length < 1) {
+        alert('At least one public key is required. Please upload public key(s) in Config.');
+        showSection('config');
+        return false;
+    }
+    return true;
+}
+
+function clearPrivateKey() { localStorage.removeItem('privKeyPem'); localStorage.removeItem('privKeyName'); displayStoredKeys(); }
+function clearPublicKeys() { localStorage.removeItem('pubKeys'); displayStoredKeys(); }
+
+// IndexedDB helpers for storing directory handle (best-effort; may not be supported in all browsers)
+function idbPut(key, value) {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open('key-db', 1);
+        r.onupgradeneeded = e => { const db = e.target.result; if (!db.objectStoreNames.contains('store')) db.createObjectStore('store'); };
+        r.onsuccess = e => { const db = e.target.result; const tx = db.transaction('store', 'readwrite'); tx.objectStore('store').put(value, key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); };
+        r.onerror = () => rej(r.error);
+    });
+}
+function idbGet(key) {
+    return new Promise((res, rej) => {
+        const r = indexedDB.open('key-db', 1);
+        r.onupgradeneeded = e => { const db = e.target.result; if (!db.objectStoreNames.contains('store')) db.createObjectStore('store'); };
+        r.onsuccess = e => { const db = e.target.result; const tx = db.transaction('store', 'readonly'); const req = tx.objectStore('store').get(key); req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); };
+        r.onerror = () => rej(r.error);
+    });
+}
+
+async function pickKeyDirectory() {
+    if (!window.showDirectoryPicker) {
+        document.getElementById('key-dir-info').innerText = 'Directory picker not supported in this browser.';
+        return;
+    }
+    try {
+        const handle = await window.showDirectoryPicker();
+        await idbPut('keyDirHandle', handle);
+        document.getElementById('key-dir-info').innerText = 'Saved directory: ' + (handle.name || 'selected');
+    } catch(e) { document.getElementById('key-dir-info').innerText = 'Directory selection cancelled or failed.'; }
+}
+
+async function loadStoredDirectoryHandle() {
+    try {
+        const handle = await idbGet('keyDirHandle');
+        if (!handle) return;
+        // request permission if possible
+        try {
+            const perm = await handle.requestPermission({mode: 'read'});
+            if (perm === 'granted' || perm === 'prompt') document.getElementById('key-dir-info').innerText = 'Remembered directory: ' + (handle.name || 'selected');
+            else document.getElementById('key-dir-info').innerText = 'Directory saved but permission not granted.';
+        } catch(e) { document.getElementById('key-dir-info').innerText = 'Directory handle loaded (permission API not available).'; }
+    } catch(e) { console.log('loadStoredDirectoryHandle:', e); }
+}
+
+// initialize config UI on load
+window.addEventListener('load', initConfig);
 </script>
 </body>
 </html>
